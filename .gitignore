@@ -31,3 +31,6 @@ z-other files/
 *.txt
 .gemini/
 .temp/
+supabase/
+.agents/
+.github/
