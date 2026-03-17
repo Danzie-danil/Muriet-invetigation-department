@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import MainLayout from './layouts/MainLayout';
 import Dashboard from './pages/Dashboard';
 import CasesModule from './pages/CasesModule';
@@ -23,7 +23,7 @@ export default function App() {
     <AuthProvider>
       <ToastProvider>
         <LanguageProvider>
-          <BrowserRouter>
+          <HashRouter>
             <Routes>
               {/* Public Auth Route */}
               <Route path="/login" element={<Login />} />
@@ -49,10 +49,9 @@ export default function App() {
                 </Route>
               </Route>
             </Routes>
-          </BrowserRouter>
+          </HashRouter>
         </LanguageProvider>
       </ToastProvider>
     </AuthProvider>
   );
 }
-
