@@ -48,6 +48,7 @@ All modals must feature a local language toggle. This is implemented via a callb
 
 ## 5. Asset Management
 - **Icons**: Prefer [lucide-react](https://lucide.dev/icons/) (SVG-based). 
+- **Custom Assets**: For branding-specific SVGs, masking, and high-fidelity animations, refer to the **[custom.md](file:///d:/Muriet%20invetigation%20department/.agents/workflows/custom.md)** workflow.
 - **Storage**: Store static images in `src/assets/`. Use `.webp` for photos.
 - **Naming**: `description-type.extension` (e.g., `stamp-logo.webp`).
 
