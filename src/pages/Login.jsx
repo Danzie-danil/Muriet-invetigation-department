@@ -7,6 +7,7 @@ import murietPoliceEmblem from '../assets/muriet_police_emblem.png';
 import { useToast } from '../context/ToastContext';
 import { Languages } from 'lucide-react';
 import { useLanguage } from '../context/LanguageContext';
+import OptimizedImage from '../components/ui/OptimizedImage';
 
 const Login = () => {
   const [email, setEmail] = useState('');
@@ -88,8 +89,8 @@ const Login = () => {
           boxShadow: '0 4px 6px rgba(0,0,0,0.05)',
           zIndex: 10
         }}
-        onMouseOver={(e) => e.currentTarget.style.borderColor = 'var(--primary-color)'}
-        onMouseOut={(e) => e.currentTarget.style.borderColor = 'var(--border-color)'}
+        onMouseOver={(e) => { e.currentTarget.style.borderColor = 'var(--primary-color)' }}
+        onMouseOut={(e) => { e.currentTarget.style.borderColor = 'var(--border-color)' }}
       >
         <Languages size={18} color="var(--primary-color)" />
         {lang === 'en' ? 'SWAHILI' : 'ENGLISH'}
@@ -97,7 +98,11 @@ const Login = () => {
 
       {/* Top Government Header */}
       <header className="auth-header">
-        <img src={tanzaniaCoatOfArms} alt="Tanzania Coat of Arms" />
+        <OptimizedImage 
+          src={tanzaniaCoatOfArms} 
+          alt="Tanzania Coat of Arms" 
+          style={{ height: '6vh', maxWidth: '60px' }}
+        />
         <div className="auth-header-text">
           <h2>{t('auth.headers.country')}</h2>
           <h1>{t('auth.headers.portal')}</h1>
@@ -109,7 +114,12 @@ const Login = () => {
         {/* Left Side: Branding/Emblem */}
         <section className="auth-brand-side">
           <div className="brand-emblem">
-            <img src={murietPoliceEmblem} alt="Muriet Police Emblem" />
+            <OptimizedImage 
+              src={murietPoliceEmblem} 
+              alt="Muriet Police Emblem" 
+              style={{ width: '85%', height: '85%' }}
+              skeletonStyle={{ borderRadius: '50%' }}
+            />
           </div>
           <div className="brand-tagline">
             <h2>{t('auth.headers.mottoSw')}</h2>

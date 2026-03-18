@@ -489,42 +489,43 @@ export default function EvidencesAndFindings() {
       <Modal 
         isOpen={isFindingModalOpen} 
         onClose={() => setIsFindingModalOpen(false)}
-        title={t('evidences.addFindingBtn')}
+        title={(mt) => mt('evidences.addFindingBtn')}
         primaryAction={handleCreateFinding}
         isPrimaryLoading={isSubmittingFinding}
       >
+        {(t, lang) => (
         <div className="u-stack" style={{ padding: '0 4px' }}>
           <div>
-            <label style={labelStyle}>Link to Case *</label>
+            <label style={labelStyle}>{lang === 'en' ? 'Link to Case *' : 'Unganisha na Jalada *'}</label>
             <Select 
               options={cases.map(c => ({ value: c.id, label: `${c.rb_number} — ${c.suspect_full_name}` }))}
               value={findingForm.caseId}
               onChange={(val) => setFindingForm(prev => ({ ...prev, caseId: val }))}
-              placeholder="Select Case..."
+              placeholder={lang === 'en' ? "Select Case..." : "Chagua Kesi..."}
             />
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
             <div>
-              <label style={labelStyle}>Date of Finding *</label>
+              <label style={labelStyle}>{t('evidences.findings.dateTaken')} *</label>
               <input type="date" value={findingForm.date} onChange={(e) => setFindingForm(prev => ({ ...prev, date: e.target.value }))} style={{ border: '1.5px solid var(--border-color)', borderRadius: '10px' }} />
             </div>
             <div>
-              <label style={labelStyle}>Location / Place *</label>
+              <label style={labelStyle}>{t('evidences.findings.placeTaken')} *</label>
               <input type="text" placeholder="e.g. MURIET BLOCK A" value={findingForm.location} onChange={(e) => setFindingForm(prev => ({ ...prev, location: capitalizeSentences(e.target.value) }))} style={{ border: '1.5px solid var(--border-color)', borderRadius: '10px' }} />
             </div>
           </div>
           <div>
-            <label style={labelStyle}>Description of Finding *</label>
+            <label style={labelStyle}>{t('evidences.findings.description')} *</label>
             <textarea 
               rows={4} 
-              placeholder="Detail your observations here..." 
+              placeholder={lang === 'en' ? "Detail your observations here..." : "Elezea maelezo yako hapa..."}
               value={findingForm.description} 
               onChange={(e) => setFindingForm(prev => ({ ...prev, description: capitalizeSentences(formatPhoneNumbersInText(e.target.value)) }))}
               style={{ border: '1.5px solid var(--border-color)', borderRadius: '10px' }}
             />
           </div>
           <div>
-            <label style={labelStyle}>Attachments (Optional)</label>
+            <label style={labelStyle}>{lang === 'en' ? 'Attachments (Optional)' : 'Viambatisho (Hiari)'}</label>
             <div 
               style={{
                 padding: '24px',
@@ -537,7 +538,9 @@ export default function EvidencesAndFindings() {
               onClick={() => document.getElementById('finding-files').click()}
             >
               <UploadCloud size={32} color="var(--primary-color)" style={{ marginBottom: '8px' }} />
-              <p style={{ margin: 0, fontSize: '13px', fontWeight: 600 }}>{findingForm.attachments.length > 0 ? `${findingForm.attachments.length} files selected` : 'Click to upload photos/documents'}</p>
+              <p style={{ margin: 0, fontSize: '13px', fontWeight: 600 }}>
+                {findingForm.attachments.length > 0 ? `${findingForm.attachments.length} ${lang === 'en' ? 'files selected' : 'faili zimechaguliwa'}` : (lang === 'en' ? 'Click to upload photos/documents' : 'Bofya kupakia picha/nyaraka')}
+              </p>
               <input 
                 id="finding-files" 
                 type="file" 
@@ -556,20 +559,22 @@ export default function EvidencesAndFindings() {
              </div>
           )}
         </div>
+        )}
       </Modal>
 
       {/* View Finding Modal with Chronological History */}
       <Modal
         isOpen={!!viewingFinding}
         onClose={() => setViewingFinding(null)}
-        title={t('evidences.findings.title')}
+        title={(mt) => mt('evidences.findings.title')}
         size="large"
       >
-        {viewingFinding && (
+        {(t, lang) => (
+        viewingFinding && (
           <div className="u-stack" style={{ padding: '0 4px' }}>
             <div style={{ padding: '20px', background: 'var(--bg-surface-hover)', borderRadius: '16px', border: '1.5px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: '24px' }}>
                 <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: '11px', fontWeight: 800, color: 'var(--primary-color)', textTransform: 'uppercase', marginBottom: '6px', letterSpacing: '1px' }}>Official Case Registry</div>
+                    <div style={{ fontSize: '11px', fontWeight: 800, color: 'var(--primary-color)', textTransform: 'uppercase', marginBottom: '6px', letterSpacing: '1px' }}>{lang === 'en' ? 'Official Case Registry' : 'Sajili Rasmi ya Kesi'}</div>
                     <div style={{ fontSize: '20px', fontWeight: 900 }}>{viewingFinding.cases?.rb_number}</div>
                     <div style={{ fontSize: '14px', color: 'var(--text-muted)', fontWeight: 600 }}>{viewingFinding.cases?.suspect_full_name}</div>
                 </div>
@@ -593,22 +598,19 @@ export default function EvidencesAndFindings() {
                     </div>
 
                     <div>
-                        <h3 className="section-subtitle"><History size={14} /> Chronological Update History</h3>
+                        <h3 className="section-subtitle"><History size={14} /> {lang === 'en' ? 'Chronological Update History' : 'Historia ya Masasisho'}</h3>
                         <div style={{ position: 'relative', paddingLeft: '24px', marginTop: '12px' }}>
                             <div style={{ position: 'absolute', left: '7px', top: 0, bottom: 0, width: '2px', background: 'var(--border-color)' }}></div>
                             
                             {findingUpdates.length === 0 ? (
-                                <div style={{ fontSize: '14px', color: 'var(--text-muted)', fontStyle: 'italic', padding: '10px 0' }}>No updates logged yet.</div>
+                                <div style={{ fontSize: '14px', color: 'var(--text-muted)', fontStyle: 'italic', padding: '10px 0' }}>{lang === 'en' ? 'No history recorded yet' : 'Hakuna historia iliyorekodiwa bado'}</div>
                             ) : (
-                                findingUpdates.map((update) => (
-                                    <div key={update.id} style={{ position: 'relative', marginBottom: '24px' }}>
-                                        <div style={{ position: 'absolute', left: '-22px', top: '6px', width: '12px', height: '12px', borderRadius: '50%', background: 'var(--primary-color)', border: '3px solid #fff', boxShadow: '0 0 0 1px var(--primary-color)' }}></div>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                                            <span style={{ fontSize: '12px', fontWeight: 800, color: 'var(--text-primary)' }}>{update.profiles?.full_name}</span>
-                                            <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 700 }}>{new Date(update.created_at).toLocaleString()}</span>
-                                        </div>
-                                        <div style={{ padding: '12px 16px', background: 'var(--bg-surface-active)', borderRadius: '10px', fontSize: '14px', lineHeight: 1.5 }}>
-                                            {update.description}
+                                findingUpdates.map((update, idx) => (
+                                    <div key={idx} style={{ position: 'relative', marginBottom: '24px' }}>
+                                        <div style={{ position: 'absolute', left: '-22px', top: '4px', width: '10px', height: '10px', borderRadius: '50%', background: 'var(--primary-color)', border: '2px solid white' }}></div>
+                                        <div style={{ fontSize: '12px', fontWeight: 800, color: 'var(--primary-color)', textTransform: 'uppercase', marginBottom: '4px' }}>{new Date(update.created_at).toLocaleString()}</div>
+                                        <div style={{ fontSize: '14px', color: 'var(--text-primary)', lineHeight: 1.5, background: 'var(--bg-surface-active)', padding: '12px', borderRadius: '8px' }}>
+                                            {update.note || update.description}
                                         </div>
                                     </div>
                                 ))
@@ -616,7 +618,7 @@ export default function EvidencesAndFindings() {
 
                             <div style={{ marginTop: '20px', padding: '16px', background: 'var(--bg-primary)', borderRadius: '12px', border: '1.5px dashed var(--border-color)' }}>
                                 <textarea 
-                                    placeholder="Add a new update to this finding..." 
+                                    placeholder={lang === 'en' ? "Add a new update to this finding..." : "Ongeza sasisho jipya..."}
                                     style={{ fontSize: '14px', marginBottom: '12px', background: 'transparent' }} 
                                     rows={3}
                                     value={newUpdateDesc}
@@ -624,7 +626,7 @@ export default function EvidencesAndFindings() {
                                 />
                                 <div style={{ textAlign: 'right' }}>
                                     <Button variant="primary" size="small" onClick={handleAddUpdate} disabled={isSubmittingUpdate || !newUpdateDesc.trim()}>
-                                        <Send size={14} /> Post Update
+                                        <Send size={14} /> {lang === 'en' ? 'Post Update' : 'Tuma Sasisho'}
                                     </Button>
                                 </div>
                             </div>
@@ -632,21 +634,22 @@ export default function EvidencesAndFindings() {
                     </div>
                </div>
 
-               <div className="u-stack">
+                <div className="u-stack">
                     <h3 className="section-subtitle"><CheckCircle2 size={14} /> {t('evidences.findings.attachments')}</h3>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                        {viewingFinding.evidence_storage?.length === 0 ? (
-                            <div style={{ padding: '30px 20px', textAlign: 'center', background: 'var(--bg-surface-active)', borderRadius: '14px', color: 'var(--text-muted)', fontSize: '13px' }}>
-                                {t('evidences.findings.noAttachments')}
+                        {(!viewingFinding.evidence_storage || viewingFinding.evidence_storage.length === 0) ? (
+                            <div style={{ textAlign: 'center', padding: '32px 16px', background: 'var(--bg-surface-hover)', borderRadius: '12px', border: '1.5px dashed var(--border-color)' }}>
+                                <AlertCircle size={32} style={{ color: 'var(--text-muted)', marginBottom: '8px', opacity: 0.5 }} />
+                                <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)' }}>{t('evidences.findings.noAttachments')}</div>
                             </div>
                         ) : (
                             viewingFinding.evidence_storage.map(file => (
-                                <div key={file.id} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '14px', border: '1.5px solid var(--border-color)', borderRadius: '12px', background: 'var(--bg-surface)' }} className="file-item-mini">
-                                    <div style={{ width: '36px', height: '36px', background: 'var(--bg-surface-hover)', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                        <FileIcon size={18} color="var(--primary-color)" />
+                                <div key={file.id} className="file-item-mini" style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', background: 'var(--bg-surface)', borderRadius: '10px', border: '1.5px solid var(--border-color)', transition: 'all 0.2s' }}>
+                                    <div style={{ width: '40px', height: '40px', borderRadius: '8px', background: 'rgba(52, 114, 213, 0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                        <FileIcon size={20} color="var(--primary-color)" />
                                     </div>
                                     <div style={{ flex: 1, minWidth: 0 }}>
-                                        <div style={{ fontSize: '13px', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file.file_name || file.original_filename}</div>
+                                        <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{file.file_name || file.original_filename}</div>
                                         <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600 }}>{(file.file_size / 1024).toFixed(1)} KB</div>
                                     </div>
                                     <div style={{ display: 'flex', gap: '4px' }}>
@@ -657,14 +660,15 @@ export default function EvidencesAndFindings() {
                             ))
                         )}
                     </div>
-               </div>
+                </div>
             </div>
             
             <div style={{ marginTop: '12px', padding: '16px', background: 'rgba(52, 114, 213, 0.05)', borderRadius: '12px', border: '1.5px solid rgba(52, 114, 213, 0.1)', display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <ShieldCheck size={18} color="var(--primary-color)" />
-                <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--primary-color)' }}>Chain of Custody Verified • Encrypted with AES-256 standards</span>
+                <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--primary-color)' }}>{lang === 'en' ? 'Chain of Custody Verified • Encrypted with AES-256 standards' : 'Msururu wa Udhibiti Umethibitishwa • Imesimbwa kwa viwango vya AES-256'}</span>
             </div>
           </div>
+        )
         )}
       </Modal>
 
@@ -672,35 +676,53 @@ export default function EvidencesAndFindings() {
       <Modal
         isOpen={isEvidenceModalOpen}
         onClose={() => setIsEvidenceModalOpen(false)}
-        title={t('evidences.uploadBtn')}
+        title={(mt) => mt('evidences.uploadBtn')}
         primaryAction={() => document.getElementById('direct-upload').click()}
-        primaryLabel={lang === 'en' ? 'Select Files' : 'Chagua Faili'}
+        primaryLabel={(mt, lang) => lang === 'en' ? 'Select Files' : 'Chagua Faili'}
       >
+        {(t, lang) => (
         <div className="u-stack" style={{ textAlign: 'center', padding: '20px 0' }}>
             <div style={{ marginBottom: '24px' }}>
-                <label style={{ ...labelStyle, textAlign: 'left' }}>Link to Case *</label>
+                <label style={{ ...labelStyle, textAlign: 'left' }}>{lang === 'en' ? 'Link to Case *' : 'Unganisha na Kesi *'}</label>
                 <Select 
                     options={cases.map(c => ({ value: c.id, label: `${c.rb_number} — ${c.suspect_full_name}` }))}
                     value={selectedCase}
                     onChange={setSelectedCase}
-                    placeholder="Select Case..."
+                    placeholder={lang === 'en' ? "Select Case..." : "Chagua Kesi..."}
                 />
             </div>
             
             <div 
-                style={{
-                    padding: '60px 40px',
-                    border: '2.5px dashed var(--border-color)',
-                    borderRadius: '20px',
+                style={{ 
+                    padding: '48px 24px', 
+                    border: '3px dashed var(--border-color)', 
+                    borderRadius: '20px', 
+                    textAlign: 'center',
                     background: 'var(--bg-surface-hover)',
                     cursor: 'pointer',
-                    transition: 'all 0.3s ease'
+                    transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center'
+                }}
+                onMouseOver={e => {
+                    e.currentTarget.style.borderColor = 'var(--primary-color)';
+                    e.currentTarget.style.background = 'rgba(52, 114, 213, 0.05)';
+                    e.currentTarget.style.transform = 'scale(1.01)';
+                }}
+                onMouseOut={e => {
+                    e.currentTarget.style.borderColor = 'var(--border-color)';
+                    e.currentTarget.style.background = 'var(--bg-surface-hover)';
+                    e.currentTarget.style.transform = 'scale(1)';
                 }}
                 onClick={() => document.getElementById('direct-upload').click()}
             >
                 <UploadCloud size={56} color="var(--primary-color)" style={{ marginBottom: '16px', opacity: 0.8 }} />
                 <h3 style={{ fontSize: '18px', fontWeight: 800 }}>{t('evidences.upload.drag')}</h3>
-                <p style={{ color: 'var(--text-muted)', fontSize: '14px', fontWeight: 600, marginTop: '8px' }}>Supports Photos, PDF, Word, Excel and TXT files</p>
+                <p style={{ color: 'var(--text-muted)', fontSize: '14px', fontWeight: 600, marginTop: '8px' }}>
+                    {lang === 'en' ? 'Supports Photos, PDF, Word, Excel and TXT files' : 'Inasaidia Picha, PDF, Word, Excel na Faili za TXT'}
+                </p>
                 <input 
                     id="direct-upload" 
                     type="file" 
@@ -725,14 +747,16 @@ export default function EvidencesAndFindings() {
                 </div>
             )}
         </div>
+        )}
       </Modal>
 
       {/* Policy Modal */}
       <Modal
         isOpen={isPolicyModalOpen}
         onClose={() => setIsPolicyModalOpen(false)}
-        title={t('evidences.policy.title')}
+        title={(mt) => mt('evidences.policy.title')}
       >
+        {(t, lang) => (
         <div style={{ padding: '20px' }}>
            <div style={{ padding: '16px', background: 'rgba(239, 68, 68, 0.05)', border: '1.5px solid rgba(239, 68, 68, 0.2)', borderRadius: '12px', display: 'flex', gap: '12px', marginBottom: '24px' }}>
                 <AlertCircle size={20} color="var(--danger-color)" />
@@ -749,6 +773,7 @@ export default function EvidencesAndFindings() {
                 <Button variant="primary" onClick={() => setIsPolicyModalOpen(false)}>{t('evidences.policy.acknowledge')}</Button>
            </div>
         </div>
+        )}
       </Modal>
 
       <style>{`

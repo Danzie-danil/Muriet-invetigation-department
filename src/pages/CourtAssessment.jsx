@@ -146,10 +146,11 @@ export default function CourtAssessment() {
       <Modal 
         isOpen={isLogModalOpen} 
         onClose={() => { setIsLogModalOpen(false); setSelectedCase(null); }} 
-        title={`${t('court.proceedings.title')} — ${selectedCase?.cases?.rb_number || ''}`}
-        primaryLabel={isSaving ? '...' : t('court.proceedings.addBtn')}
+        title={(mt) => `${mt('court.proceedings.title')} — ${selectedCase?.cases?.rb_number || ''}`}
+        primaryLabel={(mt) => mt('court.proceedings.addBtn')}
         primaryAction={handleAddNote}
       >
+        {(t, lang) => (
         <div className="u-stack">
           <div style={{ padding: '12px', background: 'var(--bg-surface-active)', borderRadius: '8px', fontSize: '13px', color: 'var(--text-muted)' }}>
             {t('court.proceedings.courtLabel')} <strong>{selectedCase?.court_name}</strong> | {t('court.proceedings.stageLabel')} <strong>{selectedCase?.current_stage || 'N/A'}</strong>
@@ -173,6 +174,7 @@ export default function CourtAssessment() {
             />
           </div>
         </div>
+        )}
       </Modal>
     </div>
   );

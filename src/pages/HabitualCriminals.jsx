@@ -313,14 +313,15 @@ export default function HabitualCriminals() {
       <Modal
         isOpen={isRegisterModalOpen}
         onClose={() => setIsRegisterModalOpen(false)}
-        title={t('habituals.registerBtn')}
+        title={(mt) => mt('habituals.registerBtn')}
         primaryAction={handleRegister}
         size="medium"
       >
+        {(t, lang) => (
         <div className="u-stack">
           <div>
             <label style={labelStyle}>{t('habituals.modal.fields.name')} *</label>
-            <input type="text" placeholder="LEGAL NAME..." value={newHabitual.name} onChange={(e) => handleNameInput(e.target.value)} autoComplete="name" />
+            <input type="text" placeholder={lang === 'en' ? "LEGAL NAME..." : "JINA KAMILI..."} value={newHabitual.name} onChange={(e) => handleNameInput(e.target.value)} autoComplete="name" />
             {formErrors.name && <span style={{ color: 'var(--danger-color)', fontSize: '11px', fontWeight: 600 }}>{formErrors.name}</span>}
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
@@ -335,7 +336,7 @@ export default function HabitualCriminals() {
           </div>
           <div>
             <label style={labelStyle}>{t('habituals.modal.fields.crime')}</label>
-            <input type="text" value={newHabitual.lastCrime} onChange={(e) => setNewHabitual({...newHabitual, lastCrime: capitalizeSentences(formatPhoneNumbersInText(e.target.value))})} autoComplete="off" />
+            <input type="text" placeholder={lang === 'en' ? "LAST KNOWN CRIME..." : "KOSA LA MWISHO..."} value={newHabitual.lastCrime} onChange={(e) => setNewHabitual({...newHabitual, lastCrime: capitalizeSentences(formatPhoneNumbersInText(e.target.value))})} autoComplete="off" />
           </div>
           
           <div>
@@ -364,16 +365,18 @@ export default function HabitualCriminals() {
             </div>
           </div>
         </div>
+        )}
       </Modal>
 
       <Modal
         isOpen={isAttendanceModalOpen}
         onClose={() => setIsAttendanceModalOpen(false)}
-        title={t('habituals.recordAttendance', 'Record Attendance')}
+        title={(mt) => mt('habituals.recordAttendance', 'Record Attendance')}
         primaryAction={handleMarkAttendance}
         size="small"
       >
-        {selectedHabitualForAttendance && (
+        {(t, lang) => (
+        selectedHabitualForAttendance && (
           <div className="u-stack">
             <div style={{ padding: '16px', background: 'var(--bg-surface-hover)', borderRadius: '8px', marginBottom: '8px' }}>
               <div style={{ fontWeight: 700, fontSize: '15px', color: 'var(--text-primary)', marginBottom: '4px' }}>
@@ -414,6 +417,7 @@ export default function HabitualCriminals() {
               />
             </div>
           </div>
+        )
         )}
       </Modal>
     </div>

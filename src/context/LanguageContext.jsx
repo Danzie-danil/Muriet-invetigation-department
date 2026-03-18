@@ -4,7 +4,7 @@ import { useAuth } from './AuthContext';
 import { useToast } from './ToastContext';
 import { supabase } from '../lib/supabase';
 
-const LanguageContext = createContext();
+export const LanguageContext = createContext();
 
 export function LanguageProvider({ children }) {
   const { profile, user } = useAuth();

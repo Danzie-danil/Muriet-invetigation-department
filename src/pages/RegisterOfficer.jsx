@@ -4,15 +4,22 @@ import tanzaniaCoatOfArms from '../assets/tanzania_coat_of_arms.png';
 import murietPoliceEmblem from '../assets/muriet_police_emblem.png';
 import { useToast } from '../context/ToastContext';
 import { useLanguage } from '../context/LanguageContext';
+import { useAuth } from '../context/AuthContext';
 import { formatPhoneNumbersInText, capitalizeSentences } from '../lib/utils';
+import OptimizedImage from '../components/ui/OptimizedImage';
+import { ShieldAlert } from 'lucide-react';
+
 
 const RegisterOfficer = () => {
+  const { role } = useAuth();
+  const isAdmin = role === 'ocs' || role === 'oc_cid';
   const [email, setEmail] = useState('');
+
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [fullName, setFullName] = useState('');
   const [badgeNumber, setBadgeNumber] = useState('');
-  const [role, setRole] = useState('io'); // default to io
+  const [targetRole, setTargetRole] = useState('io'); // default to io
   const [loading, setLoading] = useState(false);
   const { showToast } = useToast();
   const { t, lang } = useLanguage();
@@ -20,7 +27,12 @@ const RegisterOfficer = () => {
 
   const handleSignup = async (e) => {
     e.preventDefault();
+    if (!isAdmin) {
+      showToast('Permission denied. Only OCS or OC-CID can register officers.', 'error');
+      return;
+    }
     setLoading(true);
+
     setSuccess(false);
     
     try {
@@ -38,9 +50,10 @@ const RegisterOfficer = () => {
           {
             id: authData.user.id,
             full_name: fullName,
-            role: role,
+            role: targetRole,
             badge_number: badgeNumber
           }
+
         ]);
 
         // Note: RLS policies might block this if the OCS isn't allowed to insert, 
@@ -56,7 +69,8 @@ const RegisterOfficer = () => {
       setPassword('');
       setFullName('');
       setBadgeNumber('');
-      setRole('io');
+      setTargetRole('io');
+
 
     } catch (err) {
       showToast(err.message || t('registerOfficer.success.toastFail'), 'error');
@@ -65,10 +79,21 @@ const RegisterOfficer = () => {
     }
   };
 
+  if (!isAdmin) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', flexDirection: 'column', gap: '20px' }}>
+        <ShieldAlert size={64} color="var(--danger-color)" />
+        <h1 style={{ fontSize: '24px' }}>Access Denied</h1>
+        <p>You do not have administrative privileges to register new officers.</p>
+      </div>
+    );
+  }
+
   return (
-    <div style={{ height: 'calc(100vh - 64px - var(--gutter-m) * 2)', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+    <div style={{ minHeight: 'calc(100vh - 64px)', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 'var(--gutter-m) 16px' }}>
+
       {/* Main Form Container */}
-      <main className="auth-card-wrapper" style={{ margin: '0 auto', maxHeight: '100%', width: '1000px', maxWidth: '100%', background: 'var(--bg-surface)', boxShadow: 'var(--shadow-base)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-lg)', display: 'flex', overflow: 'hidden' }}>
+      <main className="auth-card-wrapper" style={{ margin: 'auto', width: '100%', maxWidth: '1000px', background: 'var(--bg-surface)', boxShadow: 'var(--shadow-base)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-lg)', display: 'flex', overflow: 'hidden', height: 'auto', minHeight: '500px' }}>
         {/* Left Side: Guidelines & Instructions */}
         <section className="auth-brand-side" style={{ 
           padding: '40px', 
@@ -78,16 +103,24 @@ const RegisterOfficer = () => {
           background: 'linear-gradient(135deg, #f8faff 0%, #ffffff 100%)',
           borderRight: '1px solid var(--border-color)'
         }}>
-          <div style={{ marginTop: 'auto', marginBottom: 'auto' }}>
-            <h2 style={{ 
-              color: '#051D43', 
-              fontSize: '22px', 
-              fontWeight: '800', 
-              marginBottom: '28px',
-              fontFamily: 'Inter, sans-serif'
-            }}>
-              {t('registerOfficer.guidelines.title')}
-            </h2>
+            <div style={{ marginTop: 'auto', marginBottom: 'auto', textAlign: 'center' }}>
+              <div style={{ marginBottom: '20px', display: 'flex', justifyContent: 'center' }}>
+                <OptimizedImage 
+                  src={murietPoliceEmblem} 
+                  alt="Muriet Police Emblem" 
+                  style={{ width: '120px', height: '120px' }}
+                  skeletonStyle={{ borderRadius: '50%' }}
+                />
+              </div>
+              <h2 style={{ 
+                color: '#051D43', 
+                fontSize: '22px', 
+                fontWeight: '800', 
+                marginBottom: '28px',
+                fontFamily: 'Inter, sans-serif'
+              }}>
+                {t('registerOfficer.guidelines.title')}
+              </h2>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               <article>
@@ -229,11 +262,12 @@ const RegisterOfficer = () => {
                       <select 
                         id="role"
                         name="role"
-                        value={role} 
-                        onChange={(e) => setRole(e.target.value)}
+                        value={targetRole} 
+                        onChange={(e) => setTargetRole(e.target.value)}
                         style={{ height: '42px', paddingRight: '40px' }}
                         required
                       >
+
                         <option value="io">{t('registerOfficer.form.roleIo')}</option>
                         <option value="oc_cid">{t('registerOfficer.form.roleOcCid')}</option>
                         <option value="ocs">{t('registerOfficer.form.roleOcs')}</option>

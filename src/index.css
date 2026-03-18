@@ -10,9 +10,9 @@
   --text-secondary: #555555;
   --text-muted: #9ca3af;
   
-  --primary-color: #274977;
-  --primary-hover: #1d3a5e;
-  --danger-color: #ef4444;
+  --primary-color: #131E51;
+  --primary-hover: #0a102d;
+  --danger-color: #F36E6E;
   --success-color: #10b981;
   --warning-color: #f59e0b;
   
@@ -571,8 +571,8 @@ input:not([class*="react-select"]):focus, textarea:focus {
 ===========================================
 */
 .auth-page {
-  height: 100vh;
-  width: 100vw;
+  min-height: 100vh;
+  width: 100%;
   display: flex;
   flex-direction: column;
   background: var(--bg-primary);
@@ -580,9 +580,10 @@ input:not([class*="react-select"]):focus, textarea:focus {
     radial-gradient(at 0% 0%, rgba(39, 73, 119, 0.05) 0px, transparent 50%),
     radial-gradient(at 100% 100%, rgba(39, 73, 119, 0.05) 0px, transparent 50%);
   align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  padding: 1vh 0;
+  justify-content: flex-start;
+  padding: 2vh 16px;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .auth-header {
@@ -626,11 +627,10 @@ input:not([class*="react-select"]):focus, textarea:focus {
 
 .auth-card-wrapper {
   display: flex;
-  width: 1000px;
-  max-width: 95vw;
-  height: auto;
+  width: 100%;
+  max-width: 1000px;
   min-height: 520px;
-  max-height: 85vh;
+  max-height: 90vh;
   background: rgba(255, 255, 255, 0.95);
   backdrop-filter: blur(10px);
   border-radius: var(--radius-lg);
@@ -638,10 +638,30 @@ input:not([class*="react-select"]):focus, textarea:focus {
     0 25px 50px -12px rgba(0, 0, 0, 0.15),
     0 0 0 1px rgba(0,0,0,0.05);
   overflow: hidden;
-  margin: auto 0;
+  margin: auto;
   flex-shrink: 0;
   animation: fadeIn 0.8s ease-out forwards;
   position: relative;
+}
+
+@media (max-height: 700px) {
+  .auth-card-wrapper {
+    max-height: none;
+    margin: 20px 0;
+  }
+}
+
+@media (max-width: 850px) {
+  .auth-card-wrapper {
+    flex-direction: column;
+    max-height: none;
+    max-width: 480px;
+  }
+  .auth-brand-side {
+    padding: 32px 24px;
+    border-right: none;
+    border-bottom: 1px solid rgba(0,0,0,0.05);
+  }
 }
 
 .auth-brand-side {
@@ -1007,3 +1027,33 @@ input:not([class*="react-select"]):focus, textarea:focus {
   border-color: var(--text-primary);
   border-top-color: transparent;
 }
+
+/* Global Responsive Fixes for Zoom & Small Screens */
+@media (max-width: 1200px) {
+  .container {
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 768px) {
+  :root {
+    --sidebar-width: 0px;
+  }
+  .grid-responsive {
+    grid-template-columns: 1fr;
+  }
+  .page-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+.scroll-smooth {
+  scroll-behavior: smooth;
+}
+
+/* Fix for zoomed-in content cutting off */
+main, section, div {
+  max-width: 100%;
+}
+

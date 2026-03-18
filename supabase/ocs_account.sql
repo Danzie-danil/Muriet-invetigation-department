@@ -2,8 +2,9 @@
 DO $$
 DECLARE
     new_user_id uuid := gen_random_uuid();
-    user_email text := 'danielidrissa12files@gmail.com';
+    user_email text := 'policetest@portal.tz';
     user_password text := '@Dani2233#';
+
     encrypted_pw text;
 BEGIN
     -- Hash the password using pgcrypto

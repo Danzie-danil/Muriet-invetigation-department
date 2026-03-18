@@ -11,7 +11,7 @@ import {
   Lock,
   ShieldCheck,
   FileSearch,
-  Plus, Search, ChevronLeft, ChevronRight, Save, Trash2, X, User, Phone, MapPin, Briefcase, FileText, Image as ImageIcon, RotateCw, Cloud, CloudUpload, History, Camera } from 'lucide-react';
+  Plus, Search, ChevronLeft, ChevronRight, Save, Trash2, X, User, Phone, MapPin, Briefcase, FileText, Image as ImageIcon, RotateCw, Cloud, CloudUpload, History, Camera, Calendar } from 'lucide-react';
 import CaseDetailsView from '../components/cases/CaseDetailsView';
 import { useLanguage } from '../context/LanguageContext';
 import { useToast } from '../context/ToastContext';
@@ -805,8 +805,8 @@ export default function CasesModule() {
       </div>
 
       <Card padding="0" style={{ overflow: 'hidden' }}>
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '800px' }}>
+        <div className="desktop-table" style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '950px' }}>
             <thead>
               <tr style={{ background: 'var(--bg-surface-hover)', borderBottom: '1px solid var(--border-color)' }}>
                 <th style={tableHeaderStyle}>{t('cases.table.rb')}</th>
@@ -815,7 +815,7 @@ export default function CasesModule() {
                 <th style={tableHeaderStyle}>{t('cases.table.date')}</th>
                 <th style={tableHeaderStyle}>{t('cases.table.investigator')}</th>
                 <th style={tableHeaderStyle}>{t('cases.table.status')}</th>
-                <th style={{ ...tableHeaderStyle, textAlign: 'right' }}>{t('cases.table.action')}</th>
+                <th className="sticky-action" style={{ ...tableHeaderStyle, textAlign: 'right' }}>{t('cases.table.action')}</th>
               </tr>
             </thead>
             <tbody>
@@ -859,7 +859,7 @@ export default function CasesModule() {
                       {c.status}
                     </span>
                   </td>
-                  <td style={{ ...tdStyle, textAlign: 'right' }}>
+                  <td className="sticky-action" style={{ ...tdStyle, textAlign: 'right' }}>
                     <Button 
                       variant="outline" 
                       size="small" 
@@ -876,6 +876,50 @@ export default function CasesModule() {
               ))}
             </tbody>
           </table>
+        </div>
+
+        {/* Mobile card-based transformation (< 768px) */}
+        <div className="mobile-cards">
+          {paginatedCases.map((c) => (
+            <div key={c.id} className="case-card">
+              <div className="case-card-header">
+                <div>
+                   <span className="case-card-rb">{c.rb_number}</span>
+                   <h3 className="case-card-title">{c.title}</h3>
+                </div>
+                <span style={{ 
+                  padding: '3px 8px', 
+                  borderRadius: '12px', 
+                  fontSize: '10px', 
+                  fontWeight: 800, 
+                  textTransform: 'uppercase',
+                  background: c.status.includes('Forwarded') ? '#e9edf2' : '#fef3c7',
+                  color: c.status.includes('Forwarded') ? 'var(--primary-color)' : '#d97706'
+                }}>
+                  {c.status}
+                </span>
+              </div>
+              <div className="case-card-meta">
+                <User size={12} /> {c.suspect_full_name}
+              </div>
+              <div className="case-card-meta" style={{ marginTop: '2px' }}>
+                <Calendar size={12} /> {c.created_at ? new Date(c.created_at).toLocaleDateString() : '—'}
+              </div>
+              <div className="case-card-action">
+                <Button 
+                   className="case-card-view-btn"
+                   variant="outline"
+                   onClick={async () => { 
+                    const { data: accoms } = await supabase.from('accomplices').select('*').eq('case_id', c.id);
+                    setSelectedCase({ ...c, accomplices: accoms || [] }); 
+                    setIsViewModalOpen(true); 
+                   }}
+                >
+                  {t('common.view')}
+                </Button>
+              </div>
+            </div>
+          ))}
         </div>
         
         {!isLoading && filteredCases.length === 0 && (
@@ -941,13 +985,13 @@ export default function CasesModule() {
       <Modal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        title={t('cases.modal.initTitle')}
+        title={(t) => t('cases.modal.initTitle')}
         primaryAction={handleSave}
-        primaryLabel={t('common.save')}
+        primaryLabel={(t) => t('common.save')}
         secondaryAction={() => setIsModalOpen(false)}
-        secondaryLabel={t('common.cancel')}
+        secondaryLabel={(t) => t('common.cancel')}
         isPrimaryLoading={isSubmitting}
-        footerContent={
+        footerContent={(t, lang) => (
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-muted)', fontSize: '12px' }}>
             <div style={{ 
               width: '8px', height: '8px', borderRadius: '50%', 
@@ -962,8 +1006,9 @@ export default function CasesModule() {
               <span>{lang === 'en' ? 'Cloud + Local Sync Active' : 'Mfumo + Moja kwa Moja Imetumika'}</span>
             </div>
           </div>
-        }
+        )}
       >
+        {(t, lang) => (
         <div className="u-stack" style={{ marginTop: 0 }}>
             {cloudDrafts.length > 0 && modalView === 'form' && (
               <div 
@@ -1469,16 +1514,18 @@ export default function CasesModule() {
              </React.Fragment>
            )}
         </div>
+        )}
       </Modal>
 
       {/* Case View Modal (High Visual Fidelity) */}
       <Modal
         isOpen={isViewModalOpen}
         onClose={() => setIsViewModalOpen(false)}
-        title={selectedCase ? `${t('cases.modal.viewTitle')}: ${selectedCase.rb_number}` : t('cases.modal.viewTitle')}
+        title={(mt) => selectedCase ? `${mt('cases.modal.viewTitle')}: ${selectedCase.rb_number}` : mt('cases.modal.viewTitle')}
         size="large"
       >
-        {selectedCase && (
+        {(t, lang) => (
+        selectedCase && (
           <div className="u-stack" style={{ marginTop: 0, gap: '24px' }}>
                     {/* Classification & Reference */}
               <div className="view-section">
@@ -1571,11 +1618,43 @@ export default function CasesModule() {
                 </div>
               </div>
             </div>
-          )}
+          )
+        )}
       </Modal>
 
       <style>{`
         .table-row-hover:hover { background: var(--bg-surface-hover); }
+        .sticky-action { 
+          position: sticky; 
+          right: 0; 
+          background: var(--bg-surface); 
+          z-index: 10; 
+          box-shadow: -4px 0 6px -1px rgba(0, 0, 0, 0.05);
+        }
+        th.sticky-action { background: var(--bg-surface-hover); z-index: 11; }
+        
+        @media (max-width: 767px) {
+          .desktop-table { display: none; }
+          .mobile-cards { display: flex; flex-direction: column; gap: 16px; padding: 16px; }
+          .case-card { 
+            background: var(--bg-surface); 
+            border: 1.5px solid var(--border-color); 
+            border-radius: 12px; 
+            padding: 16px; 
+            position: relative;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+          }
+          .case-card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
+          .case-card-rb { font-size: 14px; font-weight: 800; color: var(--primary-color); }
+          .case-card-title { font-size: 15px; font-weight: 700; color: var(--text-primary); margin-bottom: 4px; }
+          .case-card-meta { font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 4px; }
+          .case-card-action { margin-top: 16px; }
+          .case-card-view-btn { width: 100%; min-height: 44px !important; }
+        }
+        @media (min-width: 768px) {
+          .mobile-cards { display: none; }
+        }
+
         input::placeholder, textarea::placeholder { color: var(--text-muted); opacity: 0.6; }
         textarea { padding: 12px var(--gutter-s); border: 1px solid var(--border-color); border-radius: var(--radius-btn); outline: none; width: 100%; font-family: inherit; resize: vertical; }
         @keyframes slideLeftConfirm {

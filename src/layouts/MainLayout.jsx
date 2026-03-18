@@ -1,24 +1,46 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { Home, FolderOpen, BookOpen, UserCheck, Image as ImageIcon, Shield, Menu, X, FileText, Languages, LogOut, UserPlus } from 'lucide-react';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
+import murietPoliceEmblem from '../assets/muriet_police_emblem.png';
+import OptimizedImage from '../components/ui/OptimizedImage';
+import { translations } from '../constants/translations';
 
 export default function MainLayout() {
   const location = useLocation();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const { t, lang, toggleLanguage } = useLanguage();
+  const [modalLang, setModalLang] = useState(lang);
+
+  // Sync modalLang when globalLang changes (only when modal opens)
+  useEffect(() => {
+    if (isProfileOpen) setModalLang(lang);
+  }, [isProfileOpen, lang]);
+
+  const toggleModalLang = (e) => {
+    e.stopPropagation();
+    setModalLang(prev => prev === 'en' ? 'sw' : 'en');
+  };
+
+  const modalT = (key) => {
+    // Basic inline translation helper for the profile modal
+    const keys = key.split('.');
+    let r = translations[modalLang] || translations['en'];
+    for(const k of keys) { r = r?.[k]; }
+    return r || key;
+  };
 
   const { profile, user, logout } = useAuth();
   const navigate = useNavigate();
 
   const getRoleDisplayName = (role) => {
     switch(role) {
-      case 'ocs': return lang === 'en' ? 'Station Commander' : 'Kamanda wa Kituo';
-      case 'oc_cid': return lang === 'en' ? 'Head of CID' : 'Mkuu wa CID';
-      case 'io': return lang === 'en' ? 'Investigating Officer' : 'Afisa Upelelezi';
+      case 'ocs': return modalLang === 'en' ? 'Station Commander' : 'Kamanda wa Kituo';
+      case 'oc_cid': return modalLang === 'en' ? 'Head of CID' : 'Mkuu wa CID';
+      case 'io': return modalLang === 'en' ? 'Investigating Officer' : 'Afisa Upelelezi';
       default: return 'Authorized Officer';
     }
   };
@@ -64,7 +86,7 @@ export default function MainLayout() {
         right: 0,
         zIndex: 1000
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <button 
             onClick={() => setIsSidebarOpen(!isSidebarOpen)}
             style={{ 
@@ -72,15 +94,26 @@ export default function MainLayout() {
               background: 'none', 
               border: 'none', 
               cursor: 'pointer',
-              color: 'var(--text-primary)'
+              color: 'var(--primary-color)',
+              width: '44px',
+              height: '44px',
+              alignItems: 'center',
+              justifyContent: 'center'
             }} 
             className="mobile-toggle"
           >
             {isSidebarOpen ? <X size={24} /> : <Menu size={24} />}
           </button>
           <div style={{ fontWeight: 700, fontSize: '18px', color: 'var(--primary-color)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <div style={{ width: '32px', height: '32px', background: 'var(--primary-color)', borderRadius: '6px' }}></div>
-            MURIET P.I.D.
+            <div style={{ width: '32px', height: '32px' }} className="hide-mobile">
+              <OptimizedImage 
+                src={murietPoliceEmblem} 
+                alt="Logo" 
+                style={{ width: '100%', height: '100%' }}
+                skeletonStyle={{ borderRadius: '4px' }}
+              />
+            </div>
+            <span className="hide-mobile">{lang === 'en' ? 'MURIET P.I.D.' : 'POLISI MURIET'}</span>
           </div>
         </div>
 
@@ -269,13 +302,31 @@ export default function MainLayout() {
           </div>
         </aside>
 
-        {/* Page Content */}
+        {/* Page Content & Mobile Backdrop */}
         <main style={{ 
           flex: 1, 
           padding: 'var(--gutter-m)', 
           overflowY: 'auto', 
-          background: 'var(--bg-primary)' 
+          background: 'var(--bg-primary)',
+          position: 'relative'
         }}>
+          {isSidebarOpen && (
+            <div 
+              className="mobile-backdrop"
+              onClick={() => setIsSidebarOpen(false)}
+              style={{
+                position: 'fixed',
+                top: 'var(--header-height)',
+                left: 0,
+                right: 0,
+                bottom: 0,
+                background: 'rgba(0,0,0,0.3)',
+                backdropFilter: 'blur(6px)',
+                zIndex: 99,
+                display: 'none'
+              }}
+            />
+          )}
           <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
             <Outlet />
           </div>
@@ -298,8 +349,30 @@ export default function MainLayout() {
         >
           <div className="profile-modal" onClick={e => e.stopPropagation()}>
             <div className="profile-modal-header">
-              <div style={{ position: 'absolute', top: '16px', right: '16px', zIndex: 10 }}>
-                <button className="btn-icon" onClick={() => setIsProfileOpen(false)} style={{ background: 'rgba(255,255,255,0.2)', color: 'white' }}>
+              <div style={{ position: 'absolute', top: '16px', right: '16px', zIndex: 10, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <button 
+                  onClick={toggleModalLang}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '4px 10px',
+                    borderRadius: '16px',
+                    background: 'rgba(255,255,255,0.2)',
+                    border: '1px solid rgba(255,255,255,0.3)',
+                    color: 'white',
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    transition: 'all 0.2s'
+                  }}
+                  onMouseOver={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.3)'}
+                  onMouseOut={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.2)'}
+                >
+                  <Languages size={14} />
+                  {modalLang === 'en' ? 'SW' : 'EN'}
+                </button>
+                <button className="btn-icon" onClick={() => setIsProfileOpen(false)} style={{ background: 'rgba(255,255,255,0.2)', color: 'white', padding: '6px' }}>
                   <X size={20} />
                 </button>
               </div>
@@ -311,33 +384,33 @@ export default function MainLayout() {
               <div className="profile-header-info">
                 <h2>{profileData.name}</h2>
                 <span className="badge badge-blue">
-                   {profileData.role}
+                   {getRoleDisplayName(profile?.role)}
                 </span>
               </div>
 
               <div className="profile-details-grid">
                 <div className="profile-detail-item">
-                  <span className="profile-detail-label">{lang === 'en' ? 'Full Name' : 'Jina Kamili'}</span>
+                  <span className="profile-detail-label">{modalLang === 'en' ? 'Full Name' : 'Jina Kamili'}</span>
                   <span className="profile-detail-value">{profileData.name}</span>
                 </div>
                 <div className="profile-detail-item">
-                  <span className="profile-detail-label">{lang === 'en' ? 'Service ID' : 'Nambari ya Utumishi'}</span>
+                  <span className="profile-detail-label">{modalLang === 'en' ? 'Service ID' : 'Nambari ya Utumishi'}</span>
                   <span className="profile-detail-value">{profileData.id}</span>
                 </div>
                 <div className="profile-detail-item">
-                  <span className="profile-detail-label">{lang === 'en' ? 'Department' : 'Idara'}</span>
+                  <span className="profile-detail-label">{modalLang === 'en' ? 'Department' : 'Idara'}</span>
                   <span className="profile-detail-value">{profileData.department}</span>
                 </div>
                 <div className="profile-detail-item">
-                  <span className="profile-detail-label">{lang === 'en' ? 'Station ID' : 'Nambari ya Kituo'}</span>
+                  <span className="profile-detail-label">{modalLang === 'en' ? 'Station ID' : 'Nambari ya Kituo'}</span>
                   <span className="profile-detail-value">{profileData.station}</span>
                 </div>
                 <div className="profile-detail-item">
-                  <span className="profile-detail-label">{lang === 'en' ? 'Email Address' : 'Anwani ya Barua Pepe'}</span>
+                  <span className="profile-detail-label">{modalLang === 'en' ? 'Email Address' : 'Anwani ya Barua Pepe'}</span>
                   <span className="profile-detail-value">{profileData.email}</span>
                 </div>
                 <div className="profile-detail-item">
-                  <span className="profile-detail-label">{lang === 'en' ? 'Primary Phone' : 'Simu ya Msingi'}</span>
+                  <span className="profile-detail-label">{modalLang === 'en' ? 'Primary Phone' : 'Simu ya Msingi'}</span>
                   <span className="profile-detail-value">+255 (SECURED)</span>
                 </div>
               </div>
@@ -348,14 +421,14 @@ export default function MainLayout() {
                 onClick={() => setIsProfileOpen(false)}
                 style={{ flex: 1 }}
               >
-                {lang === 'en' ? 'Cancel' : 'Ghairi'}
+                {modalLang === 'en' ? 'Cancel' : 'Ghairi'}
               </button>
               <button 
                 className="btn btn-primary" 
                 onClick={() => setIsProfileOpen(false)}
                 style={{ flex: 1 }}
               >
-                {t('common.save')}
+                {modalT('common.save')}
               </button>
             </div>
           </div>
@@ -364,20 +437,33 @@ export default function MainLayout() {
       )}
 
       <style>{`
-        @media (max-width: 768px) {
+        @media (max-width: 1023px) {
           .mobile-toggle {
+            display: flex !important;
+          }
+          .mobile-backdrop {
             display: block !important;
           }
           .sidebar {
             position: fixed;
-            top: var(--header-height);
+            top: 0;
             bottom: 0;
             left: 0;
+            width: 80vw !important;
+            max-width: 280px;
             transform: translateX(-100%);
-            box-shadow: 10px 0 30px rgba(0,0,0,0.1);
+            z-index: 1100;
+            box-shadow: 10px 0 40px rgba(0,0,0,0.3);
+            height: 100vh !important;
+            margin-top: 0 !important;
+            padding-top: var(--header-height) !important;
           }
           .sidebar.open {
             transform: translateX(0);
+          }
+          .nav-link {
+            font-size: 16px !important;
+            padding: 14px 20px !important;
           }
           .hide-mobile {
             display: none !important;

@@ -258,7 +258,8 @@ BEGIN
     END IF;
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
 
 CREATE OR REPLACE TRIGGER tr_log_case_status
 AFTER UPDATE ON cases
@@ -289,6 +290,27 @@ BEGIN
     WHERE updated_at < NOW() - INTERVAL '7 days';
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- E. Auto-create Profile on Signup
+CREATE OR REPLACE FUNCTION handle_new_user_profile()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO public.profiles (id, full_name, role, preferred_language)
+  VALUES (
+    NEW.id,
+    COALESCE(NEW.raw_user_meta_data->>'full_name', 'Officer ' || SUBSTRING(NEW.id::text, 1, 8)),
+    COALESCE((NEW.raw_user_meta_data->>'role')::user_role, 'io'::user_role),
+    COALESCE(NEW.raw_user_meta_data->>'preferred_language', 'en')
+  );
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+CREATE OR REPLACE TRIGGER tr_on_auth_user_created
+AFTER INSERT ON auth.users
+FOR EACH ROW
+EXECUTE FUNCTION handle_new_user_profile();
+
 
 -- ==========================================
 -- 4. DATABASE VIEWS
@@ -332,30 +354,80 @@ ALTER TABLE finding_updates ENABLE ROW LEVEL SECURITY;
 ALTER TABLE case_drafts ENABLE ROW LEVEL SECURITY;
 
 -- Profiles
+DROP POLICY IF EXISTS "View all profiles" ON profiles;
 CREATE POLICY "View all profiles" ON profiles FOR SELECT TO authenticated USING (true);
-CREATE POLICY "Update own profile" ON profiles FOR UPDATE TO authenticated USING (auth.uid() = id);
+
+DROP POLICY IF EXISTS "Insert individual profiles" ON profiles;
+CREATE POLICY "Insert individual profiles" ON profiles FOR INSERT TO authenticated WITH CHECK (
+    -- Only allow OCS/OC_CID to register others OR allow a user to register their own profile 
+    -- as long as they don't give themselves an admin role unless they already are an admin.
+    (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('ocs', 'oc_cid')))
+    OR (auth.uid() = id AND role = 'io') -- Default new self-signups to 'io'
+);
+
+DROP POLICY IF EXISTS "Update profiles" ON profiles;
+CREATE POLICY "Update profiles" ON profiles FOR UPDATE TO authenticated 
+USING (auth.uid() = id OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('ocs', 'oc_cid')));
 
 -- Cases
-CREATE POLICY "View all cases" ON cases FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "View assigned or admin cases" ON cases;
+CREATE POLICY "View assigned or admin cases" ON cases FOR SELECT TO authenticated 
+USING (
+    (io_id = auth.uid()) 
+    OR (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('ocs', 'oc_cid')))
+);
+
+DROP POLICY IF EXISTS "Insert cases" ON cases;
 CREATE POLICY "Insert cases" ON cases FOR INSERT TO authenticated WITH CHECK (auth.uid() IS NOT NULL);
+
+DROP POLICY IF EXISTS "Update assigned cases" ON cases;
 CREATE POLICY "Update assigned cases" ON cases FOR UPDATE TO authenticated 
 USING ((io_id = auth.uid() AND locked = FALSE) OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('ocs', 'oc_cid')));
 
 -- Case Drafts
+DROP POLICY IF EXISTS "Manage own drafts" ON case_drafts;
 CREATE POLICY "Manage own drafts" ON case_drafts FOR ALL TO authenticated USING (auth.uid() = user_id);
 
 -- Other tables (simplified for master schema)
+DROP POLICY IF EXISTS "Standard view policy" ON accomplices;
 CREATE POLICY "Standard view policy" ON accomplices FOR SELECT TO authenticated USING (true);
+
+DROP POLICY IF EXISTS "Standard insert policy" ON accomplices;
 CREATE POLICY "Standard insert policy" ON accomplices FOR INSERT TO authenticated WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Standard view policy" ON evidence_storage;
 CREATE POLICY "Standard view policy" ON evidence_storage FOR SELECT TO authenticated USING (true);
+
+DROP POLICY IF EXISTS "Standard insert policy" ON evidence_storage;
 CREATE POLICY "Standard insert policy" ON evidence_storage FOR INSERT TO authenticated WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Standard view policy" ON case_progression;
 CREATE POLICY "Standard view policy" ON case_progression FOR SELECT TO authenticated USING (true);
+
+DROP POLICY IF EXISTS "Standard management policy" ON case_progression;
 CREATE POLICY "Standard management policy" ON case_progression FOR ALL TO authenticated USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('ocs', 'oc_cid')));
+
+DROP POLICY IF EXISTS "Standard view policy" ON habitual_register;
 CREATE POLICY "Standard view policy" ON habitual_register FOR SELECT TO authenticated USING (true);
+
+DROP POLICY IF EXISTS "Standard view policy" ON habitual_attendance;
 CREATE POLICY "Standard view policy" ON habitual_attendance FOR SELECT TO authenticated USING (true);
+
+DROP POLICY IF EXISTS "Standard view policy" ON court_assessment;
 CREATE POLICY "Standard view policy" ON court_assessment FOR SELECT TO authenticated USING (true);
+
+DROP POLICY IF EXISTS "Standard view policy" ON findings;
 CREATE POLICY "Standard view policy" ON findings FOR SELECT TO authenticated USING (true);
+
+DROP POLICY IF EXISTS "Standard view policy" ON finding_updates;
 CREATE POLICY "Standard view policy" ON finding_updates FOR SELECT TO authenticated USING (true);
+
+-- System Logs (Security Hardened)
+DROP POLICY IF EXISTS "Restrictive log view" ON system_logs;
+CREATE POLICY "Restrictive log view" ON system_logs FOR SELECT TO authenticated 
+USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('ocs', 'oc_cid')));
+
+
 
 -- ==========================================
 -- 6. STORAGE BUCKETS
@@ -370,6 +442,12 @@ ON CONFLICT (id) DO UPDATE SET
   file_size_limit = EXCLUDED.file_size_limit,
   allowed_mime_types = EXCLUDED.allowed_mime_types;
 
+DROP POLICY IF EXISTS "Authenticated upload" ON storage.objects;
 CREATE POLICY "Authenticated upload" ON storage.objects FOR INSERT TO authenticated WITH CHECK (bucket_id IN ('evidence', 'court_docs', 'mugshots'));
+
+DROP POLICY IF EXISTS "Authenticated read" ON storage.objects;
 CREATE POLICY "Authenticated read" ON storage.objects FOR SELECT TO authenticated USING (bucket_id IN ('evidence', 'court_docs', 'mugshots'));
+
+DROP POLICY IF EXISTS "Authenticated delete" ON storage.objects;
 CREATE POLICY "Authenticated delete" ON storage.objects FOR DELETE TO authenticated USING (bucket_id IN ('evidence', 'court_docs', 'mugshots'));
+
