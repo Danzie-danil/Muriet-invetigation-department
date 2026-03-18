@@ -84,6 +84,8 @@ CREATE TABLE IF NOT EXISTS evidence_storage (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Moved below habitual_register to support foreign key reference
+
 -- Case Progression
 CREATE TABLE IF NOT EXISTS case_progression (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -104,6 +106,23 @@ CREATE TABLE IF NOT EXISTS habitual_register (
   reporting_day TEXT,
   last_evaluated TIMESTAMPTZ,
   status TEXT DEFAULT 'Active'
+);
+
+-- Case Mugshots (Photo Album) - Moved here to reference habitual_register
+CREATE TABLE IF NOT EXISTS case_mugshots (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  case_id UUID REFERENCES cases(id) ON DELETE CASCADE,
+  habitual_id UUID REFERENCES habitual_register(id) ON DELETE CASCADE,
+  is_habitual BOOLEAN DEFAULT FALSE,
+  file_path TEXT NOT NULL,
+  original_filename TEXT,
+  file_size BIGINT,
+  uploaded_by UUID REFERENCES profiles(id),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  CONSTRAINT check_photo_source CHECK (
+    (case_id IS NOT NULL AND habitual_id IS NULL AND is_habitual = FALSE) OR
+    (habitual_id IS NOT NULL AND case_id IS NULL AND is_habitual = TRUE)
+  )
 );
 
 CREATE TABLE IF NOT EXISTS habitual_attendance (
@@ -184,27 +203,29 @@ CREATE INDEX IF NOT EXISTS idx_case_drafts_user_id ON case_drafts(user_id);
 CREATE OR REPLACE FUNCTION generate_muriet_rb_number()
 RETURNS TRIGGER AS $$
 DECLARE
-    current_year INTEGER;
+    current_year_text TEXT;
     next_sequence_number INTEGER;
     formatted_sequence TEXT;
 BEGIN
-    current_year := EXTRACT(YEAR FROM NOW());
-    IF NEW.rb_number IS NULL OR NEW.rb_number = '' THEN
+    current_year_text := EXTRACT(YEAR FROM NOW())::TEXT;
+    
+    -- Safety: If RB number is missing OR already exists (prevents manual insert collisions)
+    IF NEW.rb_number IS NULL OR NEW.rb_number = '' OR EXISTS (SELECT 1 FROM cases WHERE rb_number = NEW.rb_number) THEN
         SELECT COALESCE(MAX(CAST(substring(rb_number FROM '/RB/([0-9]+)/') AS INTEGER)), 0) + 1
         INTO next_sequence_number
         FROM cases
-        WHERE year = current_year;
+        WHERE rb_number LIKE '%/' || current_year_text;
 
         formatted_sequence := LPAD(next_sequence_number::TEXT, 4, '0');
-        NEW.rb_number := 'MURIET/RB/' || formatted_sequence || '/' || current_year::TEXT;
+        NEW.rb_number := 'MURIET/RB/' || formatted_sequence || '/' || current_year_text;
     END IF;
 
     IF NEW.year IS NULL THEN
-        NEW.year := current_year;
+        NEW.year := EXTRACT(YEAR FROM NOW())::INTEGER;
     END IF;
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SET search_path = public;
 
 CREATE OR REPLACE TRIGGER tr_generate_rb_before_insert
 BEFORE INSERT ON cases
@@ -215,20 +236,20 @@ EXECUTE FUNCTION generate_muriet_rb_number();
 CREATE OR REPLACE FUNCTION get_next_rb_number()
 RETURNS TEXT AS $$
 DECLARE
-    current_year INTEGER;
+    current_year_text TEXT;
     next_sequence_number INTEGER;
     formatted_sequence TEXT;
 BEGIN
-    current_year := EXTRACT(YEAR FROM NOW());
+    current_year_text := EXTRACT(YEAR FROM NOW())::TEXT;
     SELECT COALESCE(MAX(CAST(substring(rb_number FROM '/RB/([0-9]+)/') AS INTEGER)), 0) + 1
     INTO next_sequence_number
     FROM cases
-    WHERE year = current_year;
+    WHERE rb_number LIKE '%/' || current_year_text;
 
     formatted_sequence := LPAD(next_sequence_number::TEXT, 4, '0');
-    RETURN 'MURIET/RB/' || formatted_sequence || '/' || current_year::TEXT;
+    RETURN 'MURIET/RB/' || formatted_sequence || '/' || current_year_text;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 -- B. Lock Case on Court Conclusion
 CREATE OR REPLACE FUNCTION lock_case_on_verdict()
@@ -241,30 +262,99 @@ BEGIN
     END IF;
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SET search_path = public;
 
 CREATE OR REPLACE TRIGGER tr_lock_case_on_verdict
 AFTER INSERT OR UPDATE ON court_assessment
 FOR EACH ROW
 EXECUTE FUNCTION lock_case_on_verdict();
 
--- C. Audit Log Trigger
+-- C. Audit Log Triggers
+-- Log Case Status Changes
 CREATE OR REPLACE FUNCTION log_case_status_change()
 RETURNS TRIGGER AS $$
 BEGIN
     IF OLD.status IS DISTINCT FROM NEW.status THEN
         INSERT INTO system_logs (user_id, action, table_name, record_id, details)
-        VALUES (auth.uid(), 'STATUS_CHANGE', 'cases', NEW.id, jsonb_build_object('old_status', OLD.status, 'new_status', NEW.status));
+        VALUES (
+            auth.uid(), 
+            'STATUS_CHANGE', 
+            'cases', 
+            NEW.id, 
+            jsonb_build_object(
+                'rb_number', NEW.rb_number, 
+                'title', NEW.title, 
+                'old_status', OLD.status, 
+                'new_status', NEW.status
+            )
+        );
     END IF;
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 CREATE OR REPLACE TRIGGER tr_log_case_status
 AFTER UPDATE ON cases
 FOR EACH ROW
 EXECUTE FUNCTION log_case_status_change();
+
+-- Log Case Creation
+CREATE OR REPLACE FUNCTION log_case_creation()
+RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO system_logs (user_id, action, table_name, record_id, details)
+    VALUES (auth.uid(), 'CREATE_CASE', 'cases', NEW.id, jsonb_build_object('rb_number', NEW.rb_number, 'suspect', NEW.suspect_full_name));
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+CREATE OR REPLACE TRIGGER tr_log_case_creation
+AFTER INSERT ON cases
+FOR EACH ROW EXECUTE FUNCTION log_case_creation();
+
+-- Log Case Deletion
+CREATE OR REPLACE FUNCTION log_case_deletion()
+RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO system_logs (user_id, action, table_name, record_id, details)
+    VALUES (auth.uid(), 'DELETE_CASE', 'cases', OLD.id, jsonb_build_object('rb_number', OLD.rb_number));
+    RETURN OLD;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+CREATE OR REPLACE TRIGGER tr_log_case_deletion
+BEFORE DELETE ON cases
+FOR EACH ROW EXECUTE FUNCTION log_case_deletion();
+
+-- Log Evidence Uploads
+CREATE OR REPLACE FUNCTION log_evidence_upload()
+RETURNS TRIGGER AS $$
+DECLARE
+    case_rb TEXT;
+    case_title TEXT;
+BEGIN
+    -- Fetch case info so the log remains readable even if we log at the exhibit level
+    SELECT rb_number, title INTO case_rb, case_title FROM cases WHERE id = NEW.case_id;
+    
+    INSERT INTO system_logs (user_id, action, table_name, record_id, details)
+    VALUES (
+        auth.uid(), 
+        'UPLOAD_EVIDENCE', 
+        'evidence_storage', 
+        NEW.id, 
+        jsonb_build_object(
+            'rb_number', case_rb, 
+            'title', case_title, 
+            'file_name', NEW.original_filename
+        )
+    );
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+CREATE OR REPLACE TRIGGER tr_log_evidence_upload
+AFTER INSERT ON evidence_storage
+FOR EACH ROW EXECUTE FUNCTION log_evidence_upload();
 
 -- D. Draft Expiry Cleanup
 CREATE OR REPLACE FUNCTION trigger_cleanup_drafts()
@@ -275,7 +365,7 @@ BEGIN
       AND updated_at < NOW() - INTERVAL '7 days';
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SET search_path = public;
 
 CREATE OR REPLACE TRIGGER tr_cleanup_old_drafts
 BEFORE INSERT OR UPDATE ON case_drafts
@@ -289,7 +379,7 @@ BEGIN
     DELETE FROM case_drafts
     WHERE updated_at < NOW() - INTERVAL '7 days';
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 -- E. Auto-create Profile on Signup
 CREATE OR REPLACE FUNCTION handle_new_user_profile()
@@ -304,19 +394,66 @@ BEGIN
   );
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 CREATE OR REPLACE TRIGGER tr_on_auth_user_created
 AFTER INSERT ON auth.users
 FOR EACH ROW
 EXECUTE FUNCTION handle_new_user_profile();
 
+-- F. Officer Statistics (Security Hardened)
+CREATE OR REPLACE FUNCTION public.get_officer_stats()
+RETURNS TABLE(officer_id uuid, officer_name text, total_cases bigint, concluded_cases bigint)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $function$
+BEGIN
+    RETURN QUERY
+    SELECT
+        p.id as officer_id,
+        p.full_name as officer_name,
+        COUNT(c.id) as total_cases,
+        COUNT(c.id) FILTER (WHERE c.status = 'Concluded') as concluded_cases
+    FROM public.profiles p
+    LEFT JOIN public.cases c ON p.id = c.io_id
+    GROUP BY p.id, p.full_name;
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.get_officer_stats(officer_id uuid)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $function$
+DECLARE
+    active_cases INT;
+    court_cases INT;
+    result JSONB;
+BEGIN
+    SELECT COUNT(*) INTO active_cases FROM public.cases WHERE io_id = officer_id AND status != 'Concluded';
+    SELECT COUNT(*) INTO court_cases
+    FROM public.cases c
+    JOIN public.court_assessment ca ON c.id = ca.case_id
+    WHERE c.io_id = officer_id AND ca.is_closed = FALSE;
+
+    result := jsonb_build_object(
+        'active_investigations', active_cases,
+        'cases_in_court', court_cases
+    );
+    RETURN result;
+END;
+$function$;
+
 
 -- ==========================================
 -- 4. DATABASE VIEWS
 -- ==========================================
 
-CREATE OR REPLACE VIEW case_timeline_view AS
+CREATE OR REPLACE VIEW case_timeline_view 
+WITH (security_invoker = true) -- Fix: Ensure view respects RLS
+AS
 SELECT 
     c.id AS case_id,
     c.rb_number,
@@ -352,6 +489,7 @@ ALTER TABLE system_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE findings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE finding_updates ENABLE ROW LEVEL SECURITY;
 ALTER TABLE case_drafts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE case_mugshots ENABLE ROW LEVEL SECURITY;
 
 -- Profiles
 DROP POLICY IF EXISTS "View all profiles" ON profiles;
@@ -392,14 +530,29 @@ CREATE POLICY "Manage own drafts" ON case_drafts FOR ALL TO authenticated USING 
 DROP POLICY IF EXISTS "Standard view policy" ON accomplices;
 CREATE POLICY "Standard view policy" ON accomplices FOR SELECT TO authenticated USING (true);
 
+DROP POLICY IF EXISTS "Insert accomplices" ON accomplices; -- Clean up legacy permissive policy
 DROP POLICY IF EXISTS "Standard insert policy" ON accomplices;
-CREATE POLICY "Standard insert policy" ON accomplices FOR INSERT TO authenticated WITH CHECK (true);
+CREATE POLICY "Standard insert policy" ON accomplices FOR INSERT TO authenticated 
+WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid()));
 
 DROP POLICY IF EXISTS "Standard view policy" ON evidence_storage;
 CREATE POLICY "Standard view policy" ON evidence_storage FOR SELECT TO authenticated USING (true);
 
 DROP POLICY IF EXISTS "Standard insert policy" ON evidence_storage;
-CREATE POLICY "Standard insert policy" ON evidence_storage FOR INSERT TO authenticated WITH CHECK (true);
+CREATE POLICY "Standard insert policy" ON evidence_storage FOR INSERT TO authenticated 
+WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid()));
+
+-- Case Mugshots
+DROP POLICY IF EXISTS "View mugshots" ON case_mugshots;
+CREATE POLICY "View mugshots" ON case_mugshots FOR SELECT TO authenticated USING (true);
+
+DROP POLICY IF EXISTS "Insert mugshots" ON case_mugshots;
+CREATE POLICY "Insert mugshots" ON case_mugshots FOR INSERT TO authenticated 
+WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid()));
+
+DROP POLICY IF EXISTS "Delete mugshots" ON case_mugshots;
+CREATE POLICY "Delete mugshots" ON case_mugshots FOR DELETE TO authenticated
+USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('ocs', 'oc_cid')));
 
 DROP POLICY IF EXISTS "Standard view policy" ON case_progression;
 CREATE POLICY "Standard view policy" ON case_progression FOR SELECT TO authenticated USING (true);

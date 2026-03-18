@@ -27,19 +27,29 @@ export default function Modal({
   const [modalLang, setModalLang] = useState(globalLang);
 
   // Re-sync local language ONLY when modal opens, to match current app setting
+  const [shouldRender, setShouldRender] = useState(isOpen);
+  const [isClosing, setIsClosing] = useState(false);
+
   useEffect(() => {
     if (isOpen) {
-      setModalLang(globalLang);
+      setShouldRender(true);
+      setIsClosing(false);
       document.body.style.overflow = 'hidden';
-    } else {
+    } else if (shouldRender) {
+      setIsClosing(true);
+      const timer = setTimeout(() => {
+        setShouldRender(false);
+        setIsClosing(false);
+      }, 200); // Animation duration
       document.body.style.overflow = 'unset';
+      return () => clearTimeout(timer);
     }
     return () => {
       document.body.style.overflow = 'unset';
     };
-  }, [isOpen, globalLang]);
+  }, [isOpen, shouldRender, globalLang]);
 
-  if (!isOpen) return null;
+  if (!shouldRender) return null;
 
   // Local translation function
   const modalT = (key) => {
@@ -95,12 +105,12 @@ export default function Modal({
         style={{
           position: 'fixed',
           top: 0, left: 0, right: 0, bottom: 0,
-          backgroundColor: 'rgba(0,0,0,0.3)',
+          backgroundColor: 'rgba(0, 0, 0, 0.3)',
           backdropFilter: 'blur(3px)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           zIndex: 100000,
           padding: 'var(--gutter-s)',
-          animation: 'fadeIn 0.25s ease'
+          animation: `${isClosing ? 'fadeOut' : 'fadeIn'} 0.2s ease forwards`
         }}
         onClick={onClose}
       >
@@ -115,7 +125,7 @@ export default function Modal({
             display: 'flex',
             flexDirection: 'column',
             overflow: 'hidden',
-            animation: 'modalEntrance 0.3s cubic-bezier(0.25, 1, 0.5, 1)'
+            animation: `${isClosing ? 'modalExit' : 'modalEntrance'} 0.2s ${isClosing ? 'ease-in' : 'cubic-bezier(0.34, 1.56, 0.64, 1)'} forwards`
           }}
           onClick={(e) => {
             e.stopPropagation();
@@ -220,13 +230,15 @@ export default function Modal({
             </div>
           </div>
         </div>
-        <style>{`
-          @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-          @keyframes modalEntrance { from { opacity: 0; transform: translateY(24px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
-        `}</style>
-      </div>
-    </LanguageContext.Provider>
-  );
-
-  return createPortal(modalContent, document.body);
-}
+          <style>{`
+            @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+            @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
+            @keyframes modalEntrance { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+            @keyframes modalExit { from { opacity: 1; transform: scale(1); } to { opacity: 0; transform: scale(0.95); } }
+          `}</style>
+        </div>
+      </LanguageContext.Provider>
+    );
+  
+    return createPortal(modalContent, document.body);
+  }

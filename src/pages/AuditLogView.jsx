@@ -109,9 +109,29 @@ export default function AuditLogView() {
                     </span>
                   </td>
                   <td style={{ padding: '16px' }}>
-                    <div style={{ fontWeight: 500 }}>{log.table_name} {log.record_id ? `— ${log.record_id.substring(0, 8)}...` : ''}</div>
-                    <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                      {log.details ? JSON.stringify(log.details).substring(0, 60) + '...' : '—'}
+                    <div style={{ fontWeight: 500, display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start' }}>
+                      {log.details?.rb_number && (
+                        <span style={{ fontSize: '11px', fontWeight: 800, background: 'var(--bg-surface-active)', padding: '2px 6px', borderRadius: '4px', border: '1px solid var(--border-color)', color: 'var(--primary-color)' }}>
+                          {log.details.rb_number}
+                        </span>
+                      )}
+                      <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>
+                        {log.details?.title || log.table_name || '—'}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                      {log.action === 'STATUS_CHANGE' && (
+                        <span>{log.details?.old_status} → {log.details?.new_status}</span>
+                      )}
+                      {log.action === 'UPLOAD_EVIDENCE' && (
+                        <span>{log.details?.file_name}</span>
+                      )}
+                      {log.action === 'DELETE_CASE' && (
+                        <span style={{ color: 'var(--error-color)' }}>RECORD DELETED</span>
+                      )}
+                      {!['STATUS_CHANGE', 'UPLOAD_EVIDENCE', 'DELETE_CASE'].includes(log.action) && !log.details?.rb_number && (
+                        <span>ID: {log.record_id?.substring(0, 8)}...</span>
+                      )}
                     </div>
                   </td>
                 </tr>

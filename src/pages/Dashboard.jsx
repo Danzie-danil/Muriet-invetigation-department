@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { useLanguage } from '../context/LanguageContext';
 import { supabase } from '../lib/supabase';
+import { db } from '../db/db';
 
 export default function Dashboard() {
   const { t, lang } = useLanguage();
@@ -20,22 +21,44 @@ export default function Dashboard() {
   const [recentActivity, setRecentActivity] = useState([]);
 
   useEffect(() => {
-    const fetchMetrics = async () => {
-      const [
-        { count: openCases },
-        { count: inCourt },
-        { count: habitualCount },
-        { data: logs },
-      ] = await Promise.all([
-        supabase.from('cases').select('*', { count: 'exact', head: true }).not('status', 'in', '("Closed","Concluded")'),
-        supabase.from('court_assessment').select('*', { count: 'exact', head: true }).eq('is_closed', false),
-        supabase.from('habitual_register').select('*', { count: 'exact', head: true }).eq('status', 'Active'),
-        supabase.from('system_logs').select('*, profiles(full_name)').order('created_at', { ascending: false }).limit(5),
-      ]);
-      setMetrics({ openCases: openCases || 0, inCourt: inCourt || 0, habitualCount: habitualCount || 0 });
-      setRecentActivity(logs || []);
+    const loadFromLocal = async () => {
+      try {
+        const cachedMetrics = await db.system.get('dashboard_metrics');
+        const cachedActivity = await db.system.get('recent_activity');
+        if (cachedMetrics?.value) setMetrics(cachedMetrics.value);
+        if (cachedActivity?.value) setRecentActivity(cachedActivity.value);
+      } catch (err) {
+        console.warn('[DB] Dashboard cache load failed:', err);
+      }
     };
 
+    const fetchMetrics = async () => {
+      try {
+        const [
+          { count: openCases },
+          { count: inCourt },
+          { count: habitualCount },
+          { data: logs },
+        ] = await Promise.all([
+          supabase.from('cases').select('*', { count: 'exact', head: true }).not('status', 'in', '("Closed","Concluded")'),
+          supabase.from('court_assessment').select('*', { count: 'exact', head: true }).eq('is_closed', false),
+          supabase.from('habitual_register').select('*', { count: 'exact', head: true }).eq('status', 'Active'),
+          supabase.from('system_logs').select('*, profiles(full_name)').order('created_at', { ascending: false }).limit(5),
+        ]);
+        
+        const newMetrics = { openCases: openCases || 0, inCourt: inCourt || 0, habitualCount: habitualCount || 0 };
+        setMetrics(newMetrics);
+        setRecentActivity(logs || []);
+        
+        // Cache for next time
+        await db.system.put({ key: 'dashboard_metrics', value: newMetrics });
+        await db.system.put({ key: 'recent_activity', value: logs || [] });
+      } catch (err) {
+        console.error('Error fetching dashboard metrics:', err);
+      }
+    };
+
+    loadFromLocal();
     fetchMetrics();
 
     // Real-time subscriptions to keep dashboard metrics live

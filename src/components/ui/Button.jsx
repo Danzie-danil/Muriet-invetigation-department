@@ -5,6 +5,7 @@ export default function Button({
   variant = 'primary', 
   isLoading = false, 
   className = '', 
+  style = {},
   ...props 
 }) {
   const isSmall = props.size === 'sm';
@@ -49,16 +50,22 @@ export default function Button({
     danger: {
       background: 'var(--danger-color)',
       color: 'white',
+    },
+    success: {
+      background: 'var(--success-color)',
+      color: 'white',
+      boxShadow: '0 2px 4px rgba(16, 185, 129, 0.2)',
     }
   };
 
   return (
     <button 
-      style={{ ...baseStyle, ...variants[variant] }} 
+      style={{ ...baseStyle, ...variants[variant], ...style }} 
       disabled={isLoading}
       className={`btn-ref ${className}`}
       onMouseOver={(e) => {
         if (!isLoading && variant === 'primary') e.currentTarget.style.background = 'var(--primary-hover)';
+        if (!isLoading && variant === 'success') e.currentTarget.style.background = '#059669'; // Slightly darker green
         if (!isLoading && variant === 'secondary') e.currentTarget.style.background = 'var(--border-color)';
         if (!isLoading && variant === 'ghost') e.currentTarget.style.background = 'rgba(0,0,0,0.05)';
         if (!isLoading) e.currentTarget.style.transform = 'translateY(-1px)';

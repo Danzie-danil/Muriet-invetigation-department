@@ -4,7 +4,9 @@ export default function Card({
   children, 
   className = '', 
   padding = 'var(--gutter-m)',
-  hoverable = false 
+  hoverable = false,
+  style = {},
+  ...props 
 }) {
   return (
     <div 
@@ -17,8 +19,10 @@ export default function Card({
         overflow: 'hidden',
         transition: 'all 0.3s ease',
         display: 'flex',
-        flexDirection: 'column'
+        flexDirection: 'column',
+        ...style
       }}
+      {...props}
     >
       {children}
       <style>{`

@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
+import { db, syncTable } from '../db/db';
 import { 
   UploadCloud,
   CheckCircle2,
@@ -16,7 +17,7 @@ import CaseDetailsView from '../components/cases/CaseDetailsView';
 import { useLanguage } from '../context/LanguageContext';
 import { useToast } from '../context/ToastContext';
 import { supabase } from '../lib/supabase';
-import { formatPhoneNumbersInText, capitalizeSentences, withTimeout } from '../lib/utils';
+import { formatPhoneNumbersInText, capitalizeSentences, withTimeout, compressImage } from '../lib/utils';
 export default function CasesModule() {
   const { t, lang } = useLanguage();
   const { showToast } = useToast();
@@ -90,8 +91,9 @@ export default function CasesModule() {
   const [preEvaluationAttachments, setPreEvaluationAttachments] = useState([]);
   const [uploadStatus, setUploadStatus] = useState('idle'); // idle, uploading, scanning, securing, complete
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [bannerCountdown, setBannerCountdown] = useState(10);
+  const [bannerCountdown, setBannerCountdown] = useState(0);
   const [draftToDeleteId, setDraftToDeleteId] = useState(null);
+  const [hasDismissedDraftBanner, setHasDismissedDraftBanner] = useState(false);
 
   const [cases, setCases] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -101,41 +103,48 @@ export default function CasesModule() {
 
   // --- Supabase Data Loading ---
 
-  const fetchCases = useCallback(async (isBackground = false) => {
-    // Only show loading spinner on the very first fetch when we have NO data
-    const shouldShowSpinner = !isBackground && cases.length === 0;
-    
-    if (shouldShowSpinner) setIsLoading(true);
-    if (!isBackground) setFetchError(null);
-    
-    // Clear any pending retry
-    if (retryTimer.current) { clearTimeout(retryTimer.current); retryTimer.current = null; }
-
+  const fetchCases = useCallback(async (isSilent = false) => {
+    if (!isSilent) setIsLoading(true);
+    setFetchError(null);
     try {
       const { data, error } = await withTimeout(
-        supabase.from('cases').select('*, profiles(full_name)').order('created_at', { ascending: false }),
-        8000 // 8 second timeout
+        supabase
+          .from('cases')
+          .select('*, profiles(full_name)')
+          .order('created_at', { ascending: false }),
+        8000
       );
       if (error) throw error;
       setCases(data || []);
-      isFirstFetch.current = false;
-      if (!isBackground) setFetchError(null);
+      // Sync to local DB for next load
+      if (data) await syncTable('cases', data);
     } catch (err) {
-      console.error('Error fetching cases:', err);
-      if (!isBackground) {
-        setFetchError(err.message || 'Connection failed. Retrying...');
-        // Auto-retry every 5 seconds until success
-        retryTimer.current = setTimeout(() => fetchCases(false), 5000);
-      }
+      console.error('Error fetching cases:', err.message);
+      setFetchError(err.message);
     } finally {
-      if (shouldShowSpinner) setIsLoading(false);
+      setIsLoading(false);
     }
-  }, [cases.length]); // Re-memoize if length changes to allow shouldShowSpinner logic to work correctly
+  }, []);
 
+  // 1. Initial Load from Local DB (SWR Immediate)
   useEffect(() => {
-    fetchCases(false); // initial load with spinner
+    const loadFromLocal = async () => {
+      try {
+        const localCases = await db.cases.toArray();
+        if (localCases.length > 0) {
+          setCases(localCases);
+          setIsLoading(false); // We have data, can hide initial spinner
+        }
+      } catch (err) {
+        console.warn('[DB] Failed to load local cases:', err);
+      }
+    };
+    loadFromLocal();
+    fetchCases();
+  }, [fetchCases]);
 
-    // Real-time: silently refresh in the background – no loading flicker
+  // 2. Setup Realtime Subscription
+  useEffect(() => {
     const channel = supabase
       .channel('cases-realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'cases' }, () => {
@@ -149,15 +158,96 @@ export default function CasesModule() {
     };
   }, [fetchCases]);
 
-  // Fetch next RB number when opening the modal
+  const handleViewCase = async (c) => {
+    try {
+      const { data: accoms } = await supabase.from('accomplices').select('*').eq('case_id', c.id);
+      if (accoms) await syncTable('accomplices', accoms);
+
+      // Check local cache for mugshot first
+      const cachedMugshot = await db.mugshots.get(c.id);
+      let mugshotUrl = null;
+
+      if (cachedMugshot?.blob) {
+        mugshotUrl = URL.createObjectURL(cachedMugshot.blob);
+      } else {
+        // Fetch latest mugshot metadata
+        const { data: mugshotData } = await supabase
+          .from('case_mugshots')
+          .select('id, file_path')
+          .eq('case_id', c.id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        
+        if (mugshotData?.file_path) {
+          // Get the actual file blob
+          const { data: blob, error: dlErr } = await supabase.storage
+            .from('mugshots')
+            .download(mugshotData.file_path);
+          
+          if (!dlErr && blob) {
+            mugshotUrl = URL.createObjectURL(blob);
+            // Cache the blob locally
+            await db.mugshots.put({
+              id: c.id, // Use case_id as key for easy lookup
+              case_id: c.id,
+              file_path: mugshotData.file_path,
+              blob: blob,
+              created_at: new Date()
+            });
+          }
+        }
+      }
+
+      setSelectedCase({ ...c, accomplices: accoms || [], mugshotUrl }); 
+      setIsViewModalOpen(true);
+      
+      // Log the view action for audit purposes
+      if (user) {
+        await supabase.from('system_logs').insert({
+          user_id: user.id,
+          action: 'VIEW_CASE',
+          table_name: 'cases',
+          record_id: c.id,
+          details: { rb_number: c.rb_number, title: c.title }
+        });
+      }
+    } catch (err) {
+      console.error('Error handling case view:', err);
+    }
+  };
+
+  // Handle URL deep-linking
   useEffect(() => {
     const searchParams = new URLSearchParams(location.search);
-    if (searchParams.get('create') === 'true') {
+    const createMode = searchParams.get('create');
+    const viewId = searchParams.get('view');
+
+    if (createMode === 'true') {
       setIsModalOpen(true);
-      // Clean up the URL to prevent re-opening on manual refresh later
       navigate('/cases', { replace: true });
+    } else if (viewId) {
+      const foundCase = cases.find(c => c.id === viewId);
+      if (foundCase) {
+        handleViewCase(foundCase);
+        navigate('/cases', { replace: true });
+      } else if (cases.length > 0) {
+        const fetchAndShow = async () => {
+          try {
+            const { data, error } = await supabase.from('cases').select('*, profiles(full_name)').eq('id', viewId).single();
+            if (data && !error) {
+              handleViewCase(data);
+            }
+          } catch (err) {
+            console.error('Error fetching deep-linked case:', err);
+          } finally {
+            navigate('/cases', { replace: true });
+          }
+        };
+        fetchAndShow();
+      }
     }
-  }, [location.search, navigate]);
+  }, [location.search, navigate, cases, handleViewCase]);
 
   // Fetch next RB number when opening the modal
   useEffect(() => {
@@ -238,11 +328,14 @@ export default function CasesModule() {
           const now = new Date();
           const isRecentlySaved = (now - draftDate) < 1000 * 60 * 60 * 24 * 7;
           
-          // Filter out drafts that are effectively empty
-          return isRecentlySaved && !isFormMeaningfullyEmpty(d.form_data);
+          // Filter out drafts that are effectively empty OR is the same as the active one
+          return isRecentlySaved && d.id !== activeDraftId && !isFormMeaningfullyEmpty(d.form_data);
         });
         setCloudDrafts(validDrafts);
-        if (validDrafts.length > 0 && modalView === 'form') setBannerCountdown(10);
+        // Only initialize the countdown if we have drafts and it's not already running/dismissed
+        if (validDrafts.length > 0 && modalView === 'form' && !hasDismissedDraftBanner && bannerCountdown === 0) {
+          setBannerCountdown(10);
+        }
       } else {
         setCloudDrafts([]);
       }
@@ -253,25 +346,32 @@ export default function CasesModule() {
 
   useEffect(() => {
     if (isModalOpen) {
-      fetchDrafts();
+      // Only fetch drafts once when opening the modal, to avoid a rerender loop while typing
+      const timer = setTimeout(() => {
+        fetchDrafts();
+      }, 300);
+      return () => clearTimeout(timer);
     } else {
       setCloudDrafts([]);
       setModalView('form');
+      setHasDismissedDraftBanner(false);
+      setBannerCountdown(0);
     }
-  }, [isModalOpen, fetchDrafts]);
+  }, [isModalOpen]); // Removed fetchDrafts dependency to prevent loop while typing
 
   // Draft Banner Countdown Logic
   useEffect(() => {
     let timer;
-    if (isModalOpen && cloudDrafts.length > 0 && modalView === "form" && bannerCountdown > 0) {
+    if (isModalOpen && cloudDrafts.length > 0 && modalView === "form" && bannerCountdown > 0 && !hasDismissedDraftBanner) {
       timer = setInterval(() => {
         setBannerCountdown(prev => prev - 1);
       }, 1000);
     } else if (bannerCountdown === 0 && modalView === "form" && cloudDrafts.length > 0) {
+      setHasDismissedDraftBanner(true);
       setCloudDrafts([]);
     }
     return () => clearInterval(timer);
-  }, [isModalOpen, cloudDrafts.length, modalView, bannerCountdown]);
+  }, [isModalOpen, cloudDrafts.length, modalView, bannerCountdown, hasDismissedDraftBanner]);
 
   const handleCloudSync = async () => {
     setIsSyncing(true);
@@ -667,36 +767,58 @@ export default function CasesModule() {
               }));
               await supabase.from('accomplices').insert(accomplicesPayload);
             }
-            // Upload suspect photo to Supabase Storage if provided
+            // 2. Upload suspect photo (Mugshot) to Supabase Storage
             if (suspectPhoto?.file && newCaseData) {
               const fileExt = suspectPhoto.file.name.split('.').pop();
-              const filePath = `${newCaseData.id}/${Date.now()}.${fileExt}`;
+              const fileName = `${Date.now()}.${fileExt}`;
+              const filePath = `${newCaseData.id}/${fileName}`;
+              
+              console.log('[PHOTO DEBUG] Step 1: Compressing and uploading to mugshots bucket...', { filePath, fileName, fileSize: suspectPhoto.file.size, fileType: suspectPhoto.file.type });
+              
+              const compressedPhoto = await compressImage(suspectPhoto.file);
+
               const { error: uploadErr } = await supabase.storage
                 .from('mugshots')
-                .upload(filePath, suspectPhoto.file, { contentType: suspectPhoto.file.type, upsert: true });
+                .upload(filePath, compressedPhoto, { contentType: compressedPhoto.type, upsert: true });
 
-              if (!uploadErr) {
-                // Register it in evidence_storage so it appears in the Photo Album
-                await supabase.from('evidence_storage').insert({
-                  case_id: newCaseData.id,
-                  file_path: filePath,
-                  original_filename: suspectPhoto.file.name,
-                  file_type: 'mugshot',
-                  file_size: suspectPhoto.file.size,
-                  uploaded_by: user?.id || null,
-                });
+              if (uploadErr) {
+                console.error('[PHOTO DEBUG] Step 1 FAILED - Storage Upload Error:', uploadErr);
+                showToast(`Photo storage failed: ${uploadErr.message}`, 'error', 8000);
               } else {
-                console.warn('Photo upload failed:', uploadErr.message);
+                console.log('[PHOTO DEBUG] Step 1 SUCCESS - File uploaded to mugshots bucket');
               }
+
+              const dbPayload = {
+                case_id: newCaseData.id,
+                file_path: filePath,
+                original_filename: suspectPhoto.file.name,
+                file_size: compressedPhoto.size,
+                uploaded_by: user?.id || null,
+              };
+              console.log('[PHOTO DEBUG] Step 2: Inserting into case_mugshots...', dbPayload);
+
+              const { data: insertedRow, error: dbLinkErr } = await supabase
+                .from('case_mugshots')
+                .insert(dbPayload)
+                .select();
+
+              if (dbLinkErr) {
+                console.error('[PHOTO DEBUG] Step 2 FAILED - DB Insert Error:', dbLinkErr);
+                showToast(`Photo DB link failed: ${dbLinkErr.message}`, 'error', 8000);
+              } else {
+                console.log('[PHOTO DEBUG] Step 2 SUCCESS - Row inserted:', insertedRow);
+              }
+            } else {
+              console.log('[PHOTO DEBUG] No photo attached or no case data. suspectPhoto:', !!suspectPhoto, 'newCaseData:', !!newCaseData);
             }
 
-            // Handle Pre-evaluation Finding and Attachments
-            if ((newCaseForm.actionsTakenBefore || preEvaluationAttachments.length > 0) && newCaseData) {
+            // 3. Handle Pre-evaluation Finding and Attachments
+            if (newCaseData) {
                const { data: findingData, error: findingError } = await supabase
                  .from('findings')
                  .insert({
                    case_id: newCaseData.id,
-                   description: newCaseForm.actionsTakenBefore || "Initial Findings",
+                   description: newCaseForm.actionsTakenBefore || "Initial Case Pre-evaluation",
                    location: newCaseForm.incidentLocation,
                    finding_date: new Date().toISOString().split('T')[0],
                    io_id: user?.id || null
@@ -705,40 +827,62 @@ export default function CasesModule() {
                  .single();
                
                if (!findingError && preEvaluationAttachments.length > 0) {
-                 // Upload attachments
                  setUploadStatus('uploading');
                  for (let i = 0; i < preEvaluationAttachments.length; i++) {
                    const file = preEvaluationAttachments[i];
                    
-                   // Wow factor simulation
+                   // UI Progress simulation
                    for (let p = 0; p <= 100; p += 25) {
                      setUploadProgress(p);
                      setUploadStatus(p < 30 ? 'uploading' : p < 60 ? 'scanning' : 'securing');
-                     await new Promise(r => setTimeout(r, 150));
+                     await new Promise(r => setTimeout(r, 100));
                    }
 
+                   const isImage = file.type.startsWith('image/');
+                   const targetBucket = isImage ? 'mugshots' : 'evidence';
+                   const fileCategory = isImage ? 'mugshot' : 'pre-evaluation';
+
+                   // Compress images before upload
+                   const fileToUpload = isImage ? await compressImage(file) : file;
+
                    const fileExt = file.name.split('.').pop();
-                   const fileName = `${newCaseData.id}/${Date.now()}_${i}.${fileExt}`;
-                   const filePath = `evidence/${fileName}`;
+                   const fileName = `${Date.now()}_${i}.${fileExt}`;
+                   const filePath = `${newCaseData.id}/${fileName}`;
 
                    const { error: uploadError } = await supabase.storage
-                     .from('evidence')
-                     .upload(filePath, file);
+                     .from(targetBucket)
+                     .upload(filePath, fileToUpload);
 
-                   if (!uploadError) {
-                     await supabase.from('evidence_storage').insert({
-                       case_id: newCaseData.id,
-                       finding_id: findingData.id,
-                       file_path: filePath,
-                       file_type: 'pre-evaluation',
-                       file_size: file.size,
-                       uploaded_by: user?.id || null,
-                       original_filename: file.name
-                     });
+                   if (uploadError) {
+                     console.error('Attachment Upload Error:', uploadError);
+                     throw new Error(`Attachment upload failed: ${uploadError.message}`);
+                   }
+
+                   // 3. Register in DB (Branch based on file type)
+                   const dbPayload = {
+                     case_id: newCaseData.id,
+                     file_path: filePath,
+                     original_filename: file.name,
+                     file_size: fileToUpload.size,
+                     uploaded_by: user?.id || null
+                   };
+
+                   const targetTable = isImage ? 'case_mugshots' : 'evidence_storage';
+                   
+                   // Add finding_id for general evidence, though mugshots focus on the suspect profile
+                   const finalPayload = isImage ? dbPayload : { ...dbPayload, finding_id: findingData.id, file_type: 'pre-evaluation' };
+
+                   console.log(`[ATTACH DEBUG] Registering to ${targetTable}...`, finalPayload);
+
+                   const { error: dbLinkError } = await supabase.from(targetTable).insert(finalPayload);
+
+                   if (dbLinkError) {
+                     console.error(`[ATTACH DEBUG] ${targetTable} Error:`, dbLinkError);
+                     throw new Error(`Failed to register attachment: ${dbLinkError.message}`);
                    }
                  }
                  setUploadStatus('complete');
-                 await new Promise(r => setTimeout(r, 800));
+                 await new Promise(r => setTimeout(r, 500));
                }
             }
 
@@ -832,11 +976,7 @@ export default function CasesModule() {
                 <tr key={c.id} style={{ borderBottom: '1px solid var(--border-color)', transition: 'background 0.2s' }} className="table-row-hover">
                   <td style={tdStyle}>
                     <button 
-                      onClick={async () => { 
-                        const { data: accoms } = await supabase.from('accomplices').select('*').eq('case_id', c.id);
-                        setSelectedCase({ ...c, accomplices: accoms || [] }); 
-                        setIsViewModalOpen(true); 
-                      }}
+                      onClick={() => handleViewCase(c)}
                       style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', textAlign: 'left', cursor: 'pointer' }}
                     >
                       <span style={{ fontWeight: 700, color: 'var(--primary-color)', whiteSpace: 'nowrap' }}>{c.rb_number}</span>
@@ -863,11 +1003,7 @@ export default function CasesModule() {
                     <Button 
                       variant="outline" 
                       size="small" 
-                      onClick={async () => { 
-                        const { data: accoms } = await supabase.from('accomplices').select('*').eq('case_id', c.id);
-                        setSelectedCase({ ...c, accomplices: accoms || [] }); 
-                        setIsViewModalOpen(true); 
-                      }}
+                      onClick={() => handleViewCase(c)}
                     >
                       {t('common.view')}
                     </Button>
@@ -909,11 +1045,7 @@ export default function CasesModule() {
                 <Button 
                    className="case-card-view-btn"
                    variant="outline"
-                   onClick={async () => { 
-                    const { data: accoms } = await supabase.from('accomplices').select('*').eq('case_id', c.id);
-                    setSelectedCase({ ...c, accomplices: accoms || [] }); 
-                    setIsViewModalOpen(true); 
-                   }}
+                   onClick={() => handleViewCase(c)}
                 >
                   {t('common.view')}
                 </Button>
@@ -999,7 +1131,10 @@ export default function CasesModule() {
               boxShadow: autosaveStatus === 'saved' ? '0 0 8px var(--success-color)' : 'none'
             }}></div>
             <span style={{ marginRight: '8px' }}>
-              {autosaveStatus === 'saved' ? (lang === 'en' ? 'Draft saved' : 'Rasimu imehifadhiwa') : (lang === 'en' ? 'Auto-saving...' : 'Inahifadhi...')}
+              {isFormMeaningfullyEmpty(newCaseForm) ? 
+                (lang === 'en' ? 'Waiting for your input...' : 'Inasubiri maelezo...') : 
+                (autosaveStatus === 'saved' ? (lang === 'en' ? 'Draft saved' : 'Rasimu imehifadhiwa') : (lang === 'en' ? 'Auto-saving...' : 'Inahifadhi...'))
+              }
             </span>
             <div style={{ display: 'flex', alignItems: 'center', gap: '4px', opacity: 0.7 }}>
               <Cloud size={14} />
@@ -1039,7 +1174,10 @@ export default function CasesModule() {
                   <Button 
                     size="sm" 
                     variant="ghost" 
-                    onClick={() => setCloudDrafts([])} 
+                    onClick={() => {
+                      setHasDismissedDraftBanner(true);
+                      setCloudDrafts([]);
+                    }} 
                   > 
                     {lang === "en" ? "Ignore" : "Puuza"} 
                     {bannerCountdown > 0 && ( 
@@ -1125,8 +1263,8 @@ export default function CasesModule() {
                       >
                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                             <div style={{ width: '40px', height: '40px', borderRadius: '8px', background: 'rgba(39, 73, 119, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                               <FileText size={20} color="var(--primary-color)" />
-                            </div>
+                                <FileText size={20} color="var(--primary-color)" />
+                             </div>
                             <div>
                                <p style={{ margin: 0, fontWeight: 600, color: 'var(--text-primary)' }}>
                                   {draft.form_data.title || (lang === 'en' ? 'Untitled Draft' : 'Rasimu Bila Jina')}
@@ -1203,7 +1341,7 @@ export default function CasesModule() {
                                    }
                                  }}
                                >
-                                  {draftToDeleteId === draft.id ? <X size={18} /> : <Trash2 size={18} />}
+                                   {draftToDeleteId === draft.id ? <X size={18} /> : <Trash2 size={18} />}
                                </button>
                             </div>
                             <ChevronRight size={18} color="var(--text-muted)" />
@@ -1218,7 +1356,7 @@ export default function CasesModule() {
                 <div style={{ display: 'flex', gap: '20px', alignItems: 'flex-start' }}>
                  <div style={{ flex: 1 }}>
 
-                  <h3 className="section-subtitle" style={{ marginBottom: '16px' }}><FileText size={16} /> {t('cases.modal.sections.reference')}</h3>
+                   <h3 className="section-subtitle" style={{ marginBottom: '16px' }}><FileText size={16} /> {t('cases.modal.sections.reference')}</h3>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                     <div>
                       <label style={labelStyle}>{t('cases.modal.fields.rbNum')} *</label>
@@ -1313,21 +1451,20 @@ export default function CasesModule() {
                </div>
             </div>
 
-            {/* Case Title — full width below */}
             <div style={{ marginTop: '16px' }}>
               <label style={labelStyle}>{t('cases.modal.fields.title')} *</label>
               <input type="text" placeholder="e.g. THEFT BY SERVANT..." value={newCaseForm.title} onChange={(e) => handleNameInput('title', e.target.value)} autoComplete="off" />
               {formErrors.title && <span style={errorStyle}>{formErrors.title}</span>}
             </div>
 
-            {/* Pre-evaluation Data from amendment text */}
+            <div style={{ marginTop: '16px' }}>
+              <label style={labelStyle}>{t('cases.modal.fields.source')}</label>
+              <textarea placeholder={t('cases.modal.fields.sourcePlaceholder')} style={{ minHeight: '80px' }} value={newCaseForm.sourceOfInfo} onChange={(e) => handleInputChange('sourceOfInfo', e.target.value)} autoComplete="off" />
+            </div>
+
             <div>
-               <h3 className="section-subtitle"><Briefcase size={16} /> {t('cases.modal.sections.evaluation')}</h3>
+                <h3 className="section-subtitle"><Briefcase size={16} /> {t('cases.modal.sections.evaluation')}</h3>
                <div className="u-stack" style={{ marginTop: '12px' }}>
-                 <div>
-                   <label style={labelStyle}>{t('cases.modal.fields.source')}</label>
-                   <textarea placeholder={t('cases.modal.fields.sourcePlaceholder')} style={{ minHeight: '120px' }} value={newCaseForm.sourceOfInfo} onChange={(e) => handleInputChange('sourceOfInfo', e.target.value)} autoComplete="off" />
-                 </div>
                  <div>
                    <label style={labelStyle}>{t('cases.modal.fields.location')} *</label>
                    <input type="text" placeholder={t('cases.modal.fields.locationPlaceholder')} value={newCaseForm.incidentLocation} onChange={(e) => handleInputChange('incidentLocation', e.target.value)} autoComplete="off" />
@@ -1354,7 +1491,7 @@ export default function CasesModule() {
                       onMouseOut={e => e.currentTarget.style.borderColor = 'var(--border-color)'}
                       onClick={() => document.getElementById('pre-eval-upload').click()}
                     >
-                      <UploadCloud size={32} color="var(--primary-color)" style={{ marginBottom: '8px' }} />
+                       <UploadCloud size={32} color="var(--primary-color)" style={{ marginBottom: '8px' }} />
                       <p style={{ margin: 0, fontSize: '13px', fontWeight: 600 }}>
                         {preEvaluationAttachments.length > 0 
                           ? `${preEvaluationAttachments.length} files selected` 
@@ -1456,7 +1593,7 @@ export default function CasesModule() {
                             onClick={() => removeAccomplice(idx)}
                             style={{ position: 'absolute', top: '16px', right: '16px', color: 'var(--danger-color)', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', fontWeight: 700 }}
                           >
-                            <Trash2 size={14} /> {t('cases.modal.fields.remove')}
+                             <Trash2 size={14} /> {t('cases.modal.fields.remove')}
                           </button>
                         )}
                         
@@ -1532,6 +1669,7 @@ export default function CasesModule() {
                 <h3 className="section-subtitle"><Briefcase size={16} /> {t('cases.modal.sections.reference')}</h3>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                   <DetailItem label={t('cases.modal.fields.title')} value={selectedCase.title} />
+                  <DetailItem label={t('cases.modal.fields.source')} value={selectedCase.incident_info} />
                   <DetailItem label={t('cases.table.rb')} value={`${selectedCase.rb_number}/${selectedCase.year}`} />
                   <DetailItem label={t('cases.modal.fields.date')} value={selectedCase.date_of_crime} />
                   <DetailItem label={t('cases.modal.fields.reportingDate')} value={selectedCase.date_of_reporting} />
@@ -1544,7 +1682,6 @@ export default function CasesModule() {
                 <div className="u-stack" style={{ gap: '16px' }}>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                     <DetailItem label={t('cases.modal.fields.location')} value={selectedCase.incident_location} />
-                    <DetailItem label={t('cases.modal.fields.source')} value={selectedCase.incident_info} />
                   </div>
                   <DetailItem label={t('cases.modal.fields.findings')} value={selectedCase.initial_findings} />
                   {selectedCase.prior_actions_taken && (
@@ -1604,8 +1741,16 @@ export default function CasesModule() {
                 <h3 className="section-subtitle"><ImageIcon size={16} /> {t('cases.details.sections.media')}</h3>
                 <div style={{ display: 'flex', gap: '24px', alignItems: 'center', padding: '20px', background: 'var(--bg-surface-hover)', borderRadius: '12px' }}>
                   <div style={{ textAlign: 'center' }}>
-                    <div style={{ width: '120px', height: '150px', borderRadius: '8px', border: '2px solid var(--border-color)', background: 'var(--bg-surface)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '8px' }}>
-                      <User size={48} style={{ color: 'var(--text-muted)', opacity: 0.3 }} />
+                    <div style={{ width: '120px', height: '150px', borderRadius: '8px', border: '2px solid var(--border-color)', background: 'var(--bg-surface)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '8px', overflow: 'hidden' }}>
+                      {selectedCase.mugshotUrl ? (
+                        <img 
+                          src={selectedCase.mugshotUrl} 
+                          alt="Accused Photo" 
+                          style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+                        />
+                      ) : (
+                        <User size={48} style={{ color: 'var(--text-muted)', opacity: 0.3 }} />
+                      )}
                     </div>
                     <span style={{ fontSize: '10px', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>{lang === 'en' ? 'ACCUSED PHOTO' : 'PICHA YA MTUHUMIWA'}</span>
                   </div>

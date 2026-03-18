@@ -7,11 +7,15 @@ import { UserPlus, UserCheck, Calendar, Search, Filter, AlertTriangle, CheckCirc
 import { useLanguage } from '../context/LanguageContext';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
-import { formatPhoneNumbersInText, capitalizeSentences, withTimeout } from '../lib/utils';
+import { formatPhoneNumbersInText, capitalizeSentences, withTimeout, compressImage } from '../lib/utils';
+import { db, syncTable } from '../db/db';
+import { useToast } from '../context/ToastContext';
+import { Upload, Image as ImageIcon, Camera } from 'lucide-react';
 
 export default function HabitualCriminals() {
   const { t, lang } = useLanguage();
   const { user } = useAuth();
+  const { showToast } = useToast();
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
   const [isAttendanceModalOpen, setIsAttendanceModalOpen] = useState(false);
   const [selectedHabitualForAttendance, setSelectedHabitualForAttendance] = useState(null);
@@ -28,14 +32,13 @@ export default function HabitualCriminals() {
   const [habituals, setHabituals] = useState([]);
   const [attendance, setAttendance] = useState([]);
   const [formErrors, setFormErrors] = useState({});
+  const [photoFile, setPhotoFile] = useState(null);
+  const [uploadError, setUploadError] = useState('');
 
   const fetchData = useCallback(async (isBackground = false) => {
-    // Only show loading spinner on the very first fetch or when we have no data
     const shouldShowSpinner = !isBackground && habituals.length === 0;
-    
     if (shouldShowSpinner) setIsLoading(true);
-    if (!isBackground) setFetchError(null);
-    if (retryTimer.current) { clearTimeout(retryTimer.current); retryTimer.current = null; }
+    setFetchError(null);
     try {
       const [{ data: regs, error: e1 }, { data: att, error: e2 }] = await withTimeout(Promise.all([
         supabase.from('habitual_register').select('*').order('suspect_name'),
@@ -45,20 +48,40 @@ export default function HabitualCriminals() {
       if (e2) throw e2;
       setHabituals(regs || []);
       setAttendance(att || []);
-      if (!isBackground) setFetchError(null);
+      
+      // Sync to local DB
+      if (regs) await syncTable('habitual_register', regs);
+      if (att) await syncTable('habitual_attendance', att);
+      
     } catch (err) {
       console.error('Error fetching habitual data:', err);
       if (!isBackground) {
         setFetchError(err.message || 'Connection failed. Retrying...');
-        retryTimer.current = setTimeout(() => fetchData(false), 5000);
       }
     } finally {
-      if (shouldShowSpinner) setIsLoading(false);
+      setIsLoading(false);
     }
-  }, [habituals.length]); // Re-memoize if data length changes to update spinner logic correctly
+  }, [habituals.length]);
 
   useEffect(() => {
+    const loadFromLocal = async () => {
+      try {
+        const [localRegs, localAtt] = await Promise.all([
+          db.habitual_register.toArray(),
+          db.habitual_attendance.toArray()
+        ]);
+        if (localRegs.length > 0) {
+          setHabituals(localRegs);
+          setAttendance(localAtt);
+          setIsLoading(false);
+        }
+      } catch (err) {
+        console.warn('[DB] Habitual cache load failed:', err);
+      }
+    };
+    loadFromLocal();
     fetchData(false);
+
     const channel = supabase
       .channel('habituals-realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'habitual_register' }, () => { fetchData(true); })
@@ -146,7 +169,7 @@ export default function HabitualCriminals() {
     if (missingFields.length > 0) {
       const header = lang === 'en' ? 'Missing Required Fields:' : 'Sehemu zinazohitajika zimepungua:';
       const detailMessage = `${header}\n• ${missingFields.join('\n• ')}`;
-      showToast(detailMessage, 'error', 5000);
+      showToast(detailMessage, 'error', 4000);
       return;
     }
     setIsSubmitting(true);
@@ -157,14 +180,47 @@ export default function HabitualCriminals() {
         reporting_day: newHabitual.reportingDays[0] || null,
         status: 'Active',
       };
-      const { error } = await supabase.from('habitual_register').insert(payload);
+      const { data: regData, error } = await supabase.from('habitual_register').insert(payload).select().single();
       if (error) throw error;
+
+      // Handle Photo Upload if present
+      if (photoFile && regData) {
+        try {
+          const compressed = await compressImage(photoFile);
+          const fileExt = photoFile.name.split('.').pop();
+          const filePath = `habitual/${regData.id}/${Date.now()}.${fileExt}`;
+          
+          const { error: uploadErr } = await supabase.storage
+            .from('mugshots')
+            .upload(filePath, compressed, { contentType: compressed.type, upsert: true });
+
+          if (uploadErr) throw uploadErr;
+
+          const { error: dbErr } = await supabase.from('case_mugshots').insert({
+            habitual_id: regData.id,
+            file_path: filePath,
+            original_filename: photoFile.name,
+            file_size: compressed.size,
+            uploaded_by: user?.id || null,
+            is_habitual: true
+          });
+
+          if (dbErr) throw dbErr;
+        } catch (photoErr) {
+          console.error('Photo upload failed:', photoErr);
+          // We don't block registration on photo failure, but we could show a warning
+        }
+      }
+
       setIsRegisterModalOpen(false);
       setNewHabitual({ name: '', nida: '', lastCrime: '', phone: '', reportingDays: [] });
+      setPhotoFile(null);
       setFormErrors({});
+      showToast(lang === 'en' ? 'Data Created' : 'Imehifadhiwa', 'success');
       await fetchData();
     } catch (err) {
       console.error('Registration error:', err);
+      showToast(err.message || 'Error saving data', 'error');
     } finally {
       setIsSubmitting(false);
     }
@@ -312,28 +368,104 @@ export default function HabitualCriminals() {
 
       <Modal
         isOpen={isRegisterModalOpen}
-        onClose={() => setIsRegisterModalOpen(false)}
+        onClose={() => !isSubmitting && setIsRegisterModalOpen(false)}
         title={(mt) => mt('habituals.registerBtn')}
         primaryAction={handleRegister}
+        primaryLabel={isSubmitting ? (lang === 'en' ? 'Saving...' : 'Inahifadhi...') : null}
+        isPrimaryLoading={isSubmitting}
         size="medium"
       >
         {(t, lang) => (
-        <div className="u-stack">
-          <div>
-            <label style={labelStyle}>{t('habituals.modal.fields.name')} *</label>
-            <input type="text" placeholder={lang === 'en' ? "LEGAL NAME..." : "JINA KAMILI..."} value={newHabitual.name} onChange={(e) => handleNameInput(e.target.value)} autoComplete="name" />
-            {formErrors.name && <span style={{ color: 'var(--danger-color)', fontSize: '11px', fontWeight: 600 }}>{formErrors.name}</span>}
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-            <div>
-              <label style={labelStyle}>{t('habituals.modal.fields.nida')}</label>
-              <input type="text" placeholder="XXXXXXXX-XXXXX-XXXXX-XX" value={newHabitual.nida} onChange={(e) => handleNidaInput(e.target.value)} autoComplete="off" />
+        <div className="u-stack" style={{ 
+          filter: isSubmitting ? 'blur(1px)' : 'none', 
+          opacity: isSubmitting ? 0.8 : 1,
+          pointerEvents: isSubmitting ? 'none' : 'auto', 
+          transition: 'all 0.3s ease' 
+        }}>
+          <div style={{ display: 'flex', gap: '20px', alignItems: 'flex-start' }}>
+            <div style={{ flex: 1 }} className="u-stack">
+              <div>
+                <label style={labelStyle}>{t('habituals.modal.fields.name')} *</label>
+                <input type="text" placeholder={lang === 'en' ? "LEGAL NAME..." : "JINA KAMILI..."} value={newHabitual.name} onChange={(e) => handleNameInput(e.target.value)} autoComplete="name" />
+                {formErrors.name && <span style={{ color: 'var(--danger-color)', fontSize: '11px', fontWeight: 600 }}>{formErrors.name}</span>}
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <div>
+                  <label style={labelStyle}>{t('habituals.modal.fields.nida')}</label>
+                  <input type="text" placeholder="XXXXXXXX-XXXXX-XXXXX-XX" value={newHabitual.nida} onChange={(e) => handleNidaInput(e.target.value)} autoComplete="off" />
+                </div>
+                <div>
+                  <label style={labelStyle}>{t('habituals.modal.fields.phone')}</label>
+                  <input type="tel" placeholder="+255-XXX-XXX-XXX" value={newHabitual.phone} onChange={(e) => handlePhoneInput(e.target.value)} autoComplete="tel" />
+                </div>
+              </div>
             </div>
-            <div>
-              <label style={labelStyle}>{t('habituals.modal.fields.phone')}</label>
-              <input type="tel" placeholder="+255-XXX-XXX-XXX" value={newHabitual.phone} onChange={(e) => handlePhoneInput(e.target.value)} autoComplete="tel" />
+
+            {/* Photo Picker — matches CasesModule style */}
+            <div style={{ flexShrink: 0, width: '130px', marginTop: '18px' }}>
+              <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
+                <Camera size={14} />
+                {lang === 'en' ? 'Photo' : 'Picha'}
+              </label>
+              <div
+                onClick={() => document.getElementById('habitual-photo-input').click()}
+                style={{
+                  width: '130px', height: '130px',
+                  border: `2px dashed ${photoFile ? 'var(--primary-color)' : 'var(--border-color)'}`,
+                  borderRadius: '10px',
+                  cursor: 'pointer',
+                  background: 'var(--bg-surface-hover)',
+                  transition: 'all 0.2s',
+                  display: 'flex', flexDirection: 'column',
+                  alignItems: 'center', justifyContent: 'center',
+                  overflow: 'hidden', position: 'relative',
+                }}
+                onMouseOver={e => e.currentTarget.style.borderColor = 'var(--primary-color)'}
+                onMouseOut={e => e.currentTarget.style.borderColor = photoFile ? 'var(--primary-color)' : 'var(--border-color)'}
+              >
+                {photoFile ? (
+                  <>
+                    <img 
+                      src={URL.createObjectURL(photoFile)} 
+                      alt="Suspect"
+                      style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', top: 0, left: 0 }} 
+                    />
+                    <button 
+                      type="button"
+                      onClick={e => { e.stopPropagation(); setPhotoFile(null); }}
+                      style={{
+                        position: 'absolute', top: '8px', right: '8px',
+                        background: 'rgba(0,0,0,0.55)', border: 'none', color: '#fff',
+                        borderRadius: '50%', width: '24px', height: '24px',
+                        cursor: 'pointer', fontWeight: 700, fontSize: '14px',
+                        lineHeight: '24px', textAlign: 'center', padding: 0,
+                        zIndex: 10
+                      }}
+                    >✕</button>
+                  </>
+                ) : (
+                  <div style={{ textAlign: 'center', padding: '12px' }}>
+                    <Camera size={32} color="var(--text-muted)" style={{ marginBottom: '8px' }} />
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 500 }}>
+                      {lang === 'en' ? 'Add photo' : 'Ongeza picha'}
+                    </div>
+                  </div>
+                )}
+              </div>
+              <input 
+                id="habitual-photo-input" 
+                type="file" 
+                accept="image/*" 
+                style={{ display: 'none' }}
+                onChange={e => {
+                  const file = e.target.files?.[0];
+                  if (file) setPhotoFile(file);
+                  e.target.value = '';
+                }}
+              />
             </div>
           </div>
+
           <div>
             <label style={labelStyle}>{t('habituals.modal.fields.crime')}</label>
             <input type="text" placeholder={lang === 'en' ? "LAST KNOWN CRIME..." : "KOSA LA MWISHO..."} value={newHabitual.lastCrime} onChange={(e) => setNewHabitual({...newHabitual, lastCrime: capitalizeSentences(formatPhoneNumbersInText(e.target.value))})} autoComplete="off" />
@@ -345,6 +477,7 @@ export default function HabitualCriminals() {
               {daysOfWeek.map(day => (
                 <button
                   key={day}
+                  type="button"
                   onClick={() => handleDayToggle(day)}
                   style={{
                     padding: '6px 12px',

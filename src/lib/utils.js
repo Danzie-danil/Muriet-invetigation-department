@@ -51,3 +51,64 @@ export const withTimeout = (promise, ms = 15000) => {
   );
   return Promise.race([promise, timeout]);
 };
+
+/**
+ * Compresses an image file using the browser Canvas API.
+ * Resizes to maxDimension (preserving aspect ratio) and re-encodes as JPEG.
+ * @param {File} file - The original image File
+ * @param {Object} options
+ * @param {number} options.maxDimension - Maximum width or height (default: 1200px)
+ * @param {number} options.quality - JPEG quality 0-1 (default: 0.7)
+ * @returns {Promise<File>} A compressed File object
+ */
+export const compressImage = (file, { maxDimension = 1200, quality = 0.7 } = {}) => {
+  return new Promise((resolve, reject) => {
+    // Skip if not an image
+    if (!file.type.startsWith('image/')) {
+      return resolve(file);
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let { width, height } = img;
+
+        // Scale down if larger than maxDimension
+        if (width > maxDimension || height > maxDimension) {
+          if (width > height) {
+            height = Math.round((height * maxDimension) / width);
+            width = maxDimension;
+          } else {
+            width = Math.round((width * maxDimension) / height);
+            height = maxDimension;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+
+        canvas.toBlob(
+          (blob) => {
+            if (!blob) return reject(new Error('Image compression failed'));
+            const compressedFile = new File([blob], file.name, {
+              type: 'image/jpeg',
+              lastModified: Date.now(),
+            });
+            console.log(`[COMPRESS] ${file.name}: ${(file.size / 1024).toFixed(0)}KB → ${(compressedFile.size / 1024).toFixed(0)}KB (${Math.round((1 - compressedFile.size / file.size) * 100)}% savings)`);
+            resolve(compressedFile);
+          },
+          'image/jpeg',
+          quality
+        );
+      };
+      img.onerror = () => reject(new Error('Failed to load image for compression'));
+      img.src = e.target.result;
+    };
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+  });
+};

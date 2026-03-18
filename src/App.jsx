@@ -15,6 +15,7 @@ import RegisterOfficer from './pages/RegisterOfficer';
 import { LanguageProvider } from './context/LanguageContext';
 import { AuthProvider } from './context/AuthContext';
 import ProtectedRoute from './components/auth/ProtectedRoute';
+import BackgroundDataSync from './components/sync/BackgroundDataSync';
 
 import { ToastProvider } from './context/ToastContext';
 
@@ -23,6 +24,7 @@ export default function App() {
     <AuthProvider>
       <ToastProvider>
         <LanguageProvider>
+          <BackgroundDataSync />
           <HashRouter>
             <Routes>
               {/* Public Auth Route */}
